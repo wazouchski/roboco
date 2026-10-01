@@ -2102,3 +2102,35 @@ async def test_update_pr_for_task_threads_actor_agent_id() -> None:
         )
 
     assert captured["agent_id"] == pm_id
+
+
+@pytest.mark.asyncio
+async def test_post_merge_sync_failure_logs_git_stderr_not_just_the_summary() -> None:
+    """A branch held by another per-task worktree fails both checkout attempts.
+
+    The summary ("could not check out ... locally or from origin") hid that; the
+    real cause is in the stderr the GitError already carries.
+    """
+    svc = _service()
+    svc.log = MagicMock()
+    stderr = "fatal: 'feature/x' is already used by worktree at '/w/x'"
+    failure = GitError(
+        "Could not check out target branch 'feature/x' locally or from origin.",
+        {
+            "target_branch": "feature/x",
+            "checkout_stderr": stderr,
+            "tracking_stderr": "fatal: a branch named 'feature/x' already exists",
+        },
+    )
+
+    with patch.object(svc, "_sync_target_branch", AsyncMock(side_effect=failure)):
+        result = await svc._sync_target_branch_best_effort(
+            Path("/w"), "feature/x", "token"
+        )
+
+    assert result is None
+    svc.log.warning.assert_called_once()
+    logged = svc.log.warning.call_args.kwargs
+    assert logged["target_branch"] == "feature/x"
+    assert "already used by worktree" in logged["checkout_stderr"]
+    assert "already exists" in logged["tracking_stderr"]

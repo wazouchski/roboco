@@ -3862,11 +3862,19 @@ class GitService(BaseService):
         try:
             return await self._sync_target_branch(workspace, target_branch, git_token)
         except GitError as exc:
+            # The summary alone ("could not check out ... locally or from
+            # origin") hid the real cause: a branch checked out in another
+            # per-task worktree fails both attempts with "already used by
+            # worktree" / "already exists". Local checkouts only, so no remote
+            # URL or token can be in this stderr.
+            details = exc.details or {}
             self.log.warning(
                 "post-merge target-branch sync failed; merge already landed,"
                 " continuing without local sync",
                 target_branch=target_branch,
                 error=str(exc),
+                checkout_stderr=str(details.get("checkout_stderr", ""))[:300],
+                tracking_stderr=str(details.get("tracking_stderr", ""))[:300],
             )
             return None
 

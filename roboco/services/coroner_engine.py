@@ -108,12 +108,45 @@ class CoronerEngine(BaseService):
                 kind=kind,
             )
             return None
+        if await self._already_autopsied(incident_task_id, kind):
+            self.log.info(
+                "coroner: this incident was already autopsied for this kind, skipping",
+                incident_task_id=str(incident_task_id),
+                kind=kind,
+            )
+            return None
         incident = await task_svc.get(incident_task_id)
         if incident is None:
             return None
         task = await self._originate(task_svc, incident, kind, extra_context)
         await self._record_cycle(task)
         return task
+
+    async def _already_autopsied(self, incident_task_id: UUID, kind: str) -> bool:
+        """True when any autopsy, open or finished, already names this incident
+        and ``kind``.
+
+        The one-open-at-a-time gate only stops overlap: once an autopsy
+        completed, the stranded sweep fired again for the same still-blocked
+        task and wrote another, six postmortems of one task in a day, each
+        restating the first. A second autopsy of an unchanged incident adds
+        nothing; a different ``kind`` (the task later bounces, say) is a new
+        question and still opens one.
+        """
+        from sqlalchemy import select
+
+        from roboco.db.tables import TaskTable
+
+        result = await self.session.execute(
+            select(TaskTable).where(TaskTable.source == CORONER_SOURCE)
+        )
+        for autopsy in result.scalars():
+            ref = markers.get_coroner_incident(autopsy) or {}
+            if ref.get("incident_task_id") == str(incident_task_id) and (
+                ref.get("kind") == kind
+            ):
+                return True
+        return False
 
     async def _originate(
         self,
