@@ -1196,9 +1196,21 @@ class DispatchWorkEngine(_Base):
 
         pm_id = await self._closure_review_pm(client, task, pm_id)
 
-        prompt = self._build_pm_closure_prompt(
-            task, descendants, auto_submit_reason=auto_submit_reason
-        )
+        # Same respawn circuit breaker every other PM dispatch path uses. This
+        # path had none, so a closure the PM could not land (rejected verb ->
+        # escalate -> block -> unblock -> respawn) looped for days burning
+        # Sonnet spawns. The gate also catches A<->B status oscillation.
+        if await self._pm_respawn_should_gate(pm_id, task):
+            return
+
+        if task.get("status") == "awaiting_pm_review":
+            # The PM's review/merge turn: submit_up is invalid here (it needs
+            # in_progress); the right close is complete().
+            prompt = self._build_pm_review_prompt(task)
+        else:
+            prompt = self._build_pm_closure_prompt(
+                task, descendants, auto_submit_reason=auto_submit_reason
+            )
         await self.spawn_agent(
             agent_id=pm_id,
             task_id=task_id,
