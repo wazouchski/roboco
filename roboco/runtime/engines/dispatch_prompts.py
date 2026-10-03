@@ -646,6 +646,10 @@ only the HOW (the solution); the WHAT is already decided upstream.
 Start by calling evidence(task_id="{task_id}") for full details, acceptance
 criteria, and the upstream parent/ancestor context (the original intake analysis).
 
+If a verb's response carries a `next` field (for example give_me_work() returning
+"call i_will_work_on(task_id=..., plan=...) to start"), do exactly that next
+step. Do not call give_me_work() again for a task you have already been handed.
+
 When out of work: i_am_idle().
 """
 
