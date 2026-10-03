@@ -674,7 +674,9 @@ TEAM: {team}
    and scope creep.
 3. note(scope="learning", task_id="{task_id}", text="<what this review
    surfaced>") — REQUIRED BEFORE step 4. The gateway refuses pass() and
-   fail() until a learning note exists for this task.
+   fail() until a learning note exists for this task. Write it ONCE. A note
+   is NOT a verdict: do not write "Verdict: PASS/FAIL" as a note, and do not
+   keep adding notes. Go straight to step 4 and call pass() or fail().
 4. Decide:
    - PASS: pass(task_id="{task_id}",
             notes="<>=80 chars: what you verified, which AC, evidence>")

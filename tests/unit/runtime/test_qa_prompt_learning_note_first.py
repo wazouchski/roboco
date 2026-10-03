@@ -30,3 +30,9 @@ def test_learning_note_comes_before_pass_and_fail() -> None:
 def test_prompt_forbids_i_am_blocked_during_qa() -> None:
     p = _prompt()
     assert "Do NOT call i_am_blocked" in p
+
+
+def test_prompt_says_a_note_is_not_a_verdict() -> None:
+    p = _prompt()
+    assert "A note\n   is NOT a verdict" in p or "is NOT a verdict" in p
+    assert "call pass() or fail()" in p
