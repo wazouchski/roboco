@@ -527,7 +527,7 @@ class ModelRoutingService(BaseService):
         if resolved is not None and resolved.provider.enabled:
             route = await self._route_from_resolved(resolved, agent_slug)
             if route is not None:
-                return route
+                return await self._rate_limit_fallback_route(route, agent_slug)
         elif resolved is not None and not resolved.provider.enabled:
             # Configured but disabled — distinguishable from "no assignment"
             # so the bypass is surfaced, not silent. Default stays graceful (a
@@ -546,6 +546,54 @@ class ModelRoutingService(BaseService):
                     f"to the legacy Anthropic path"
                 )
         return self._legacy_route(role)
+
+    async def _rate_limit_fallback_route(
+        self, route: AgentRoute, agent_slug: str
+    ) -> AgentRoute:
+        """Swap a parked cloud route for the configured LOCAL fallback model.
+
+        Off unless ``settings.rate_limit_fallback_model`` is set. Applies only to
+        a non-LOCAL route whose provider the rate-limit tracker currently
+        reports as limited/parked, and only if the LOCAL provider is
+        reachable; every other case (and any error) returns *route* unchanged,
+        so a tracker/Redis hiccup never changes routing.
+        """
+        model = settings.rate_limit_fallback_model.strip()
+        if not model or route.provider_type == ModelProvider.LOCAL:
+            return route
+        try:
+            from roboco.services.gateway.rate_limit_tracker import (
+                RateLimitStateTracker,
+            )
+
+            if not await RateLimitStateTracker(route.provider_type.value).is_rate_limited():
+                return route
+            local = await self._find_local_provider()
+            if local is None or not local.enabled:
+                return route
+            fallback = await self._local_route_or_none(
+                _ResolvedAssignment(
+                    provider=local, model_name=model, scope=AssignmentScope.GLOBAL
+                ),
+                agent_slug,
+            )
+        except Exception as exc:
+            self.log.warning(
+                "rate-limit fallback check failed; keeping original route",
+                agent_slug=agent_slug,
+                error=str(exc),
+            )
+            return route
+        if fallback is None:
+            return route
+        self.log.warning(
+            "Provider rate-limited; routing spawn to local fallback model",
+            agent_slug=agent_slug,
+            provider=route.provider_type.value,
+            from_model=route.model_name,
+            fallback_model=model,
+        )
+        return fallback
 
     async def _resolve_assignment(
         self, agent_slug: str, role: str, complexity: str | None = None

@@ -2099,6 +2099,16 @@ class Settings(BaseSettings):
     # Distinct from claim_stale_seconds (the general claim-freshness
     # threshold); keeping them separate lets the reaper run on a longer
     # window than other claim-staleness consumers.
+    rate_limit_fallback_model: str = Field(
+        default="",
+        description=(
+            "When set (e.g. qwen36-reap), an agent whose resolved CLOUD provider "
+            "is currently rate-limited/parked is routed to this LOCAL model at "
+            "spawn instead of waiting for the provider to recover. Empty = off "
+            "(agents park and wait, the historical behaviour); override via "
+            "ROBOCO_RATE_LIMIT_FALLBACK_MODEL"
+        ),
+    )
     stale_claim_reap_seconds: int = Field(
         default=600,
         ge=60,
