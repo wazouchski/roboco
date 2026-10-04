@@ -309,7 +309,11 @@ def render_mcp_block(mcp_config: dict[str, Any]) -> dict[str, dict[str, Any]]:
         }
         env = spec.get("env") or {}
         if env:
-            block["env"] = {str(k): str(v) for k, v in env.items()}
+            # opencode names a local MCP server's env map `environment`, not `env`.
+            # An `env` key is silently ignored, so the MCP servers fall back to the
+            # container env (agent SLUG, no manifest UUID) and every gateway call
+            # fails the X-Agent-Token check ("signature mismatch").
+            block["environment"] = {str(k): str(v) for k, v in env.items()}
         servers[str(name)] = block
     return servers
 
