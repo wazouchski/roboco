@@ -10014,7 +10014,20 @@ class TaskService(BaseService):
         for depends_on_id, task_id in edges:
             held_back_id = UUID(str(task_id))
             blocking_id = UUID(str(depends_on_id))
-            created = await self.add_dependency(held_back_id, blocking_id)
+            try:
+                created = await self.add_dependency(held_back_id, blocking_id)
+            except ConflictError:
+                # The analyzer wants the reverse of an edge that is already
+                # wired (a sort tie between two stamped siblings can flip the
+                # pair). The existing order wins: skipping is correct, raising
+                # would roll back the whole delegate and poison every later
+                # delegate under this parent (live 2026-09-30, ux-pm loop).
+                self.log.warning(
+                    "Collision edge skipped: reverse edge already wired",
+                    held_back_task_id=str(held_back_id),
+                    blocking_task_id=str(blocking_id),
+                )
+                continue
             if created:
                 held_back = siblings_by_id.get(held_back_id)
                 blocking = siblings_by_id.get(blocking_id)
@@ -10171,6 +10184,39 @@ class TaskService(BaseService):
             if max_seq is not None:
                 wave = int(max_seq) + 1
         await self.set_sequence(task_id, wave)
+
+    async def raise_dependent_waves(self, task_id: UUID) -> None:
+        """Raise same-parent dependents of ``task_id`` above its sequence.
+
+        ``stamp_wave_sequence`` only stamps the new task, but the collision DAG
+        can hold an OLDER sibling behind it (a new task arrives at sequence 0 and
+        sorts ahead of already-stamped siblings). Without a restamp the two tie
+        (or invert) and the next wiring pass flips the pair. Run post-stamp;
+        raise-only (never lowers a sequence), cascading to transitive dependents.
+        Terminal dependents are left alone.
+        """
+        task = await self.get(task_id)
+        if task is None or task.parent_task_id is None:
+            return
+        terminal = {TaskStatus.COMPLETED, TaskStatus.CANCELLED}
+        siblings = await self.get_subtasks(UUID(str(task.parent_task_id)))
+        seq = {UUID(str(s.id)): int(s.sequence or 0) for s in siblings}
+        frontier = [UUID(str(task_id))]
+        # Acyclic by add_dependency's guard, so this terminates; the cap is a
+        # belt-and-braces bound against a corrupt graph.
+        budget = len(siblings) ** 2 + 1
+        while frontier and budget > 0:
+            budget -= 1
+            current = frontier.pop()
+            for sib in siblings:
+                sib_id = UUID(str(sib.id))
+                if current not in (sib.dependency_ids or []):
+                    continue
+                if sib.status in terminal or seq[sib_id] > seq[current]:
+                    continue
+                seq[sib_id] = seq[current] + 1
+                await self.set_sequence(sib_id, seq[sib_id])
+                frontier.append(sib_id)
 
     async def unmet_dependency_ids(self, dependency_ids: list[UUID]) -> list[UUID]:
         """Return the subset of dependency IDs whose status is non-terminal.

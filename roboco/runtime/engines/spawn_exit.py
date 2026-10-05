@@ -1915,6 +1915,19 @@ class SpawnExitEngine(_Base):
         # We do NOT call ``mark_waiting_long`` — the container is already dead,
         # and parking keeps OFFLINE so the reaper's live-skip / health loop
         # ignore it.
+        if settings.rate_limit_fallback_model.strip() and provider != "local":
+            # Local fallback is on: do NOT hold the agent for provider recovery.
+            # The route resolver sends the next spawn to the local fallback model
+            # while this provider stays parked, so the dispatcher can respawn the
+            # agent on its task immediately.
+            logger.warning(
+                "Provider unavailable; local fallback enabled, not waiting",
+                provider=provider,
+                kind=kind,
+                agent_id=agent_id,
+                task_id=instance.current_task_id,
+            )
+            return
         task_id = str(instance.current_task_id) if instance.current_task_id else None
         record = WaitingRecord(
             agent_id=agent_id,

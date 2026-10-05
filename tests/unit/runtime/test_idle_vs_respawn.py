@@ -78,6 +78,7 @@ async def test_skips_spawn_when_paused_and_recently_touched_datetime() -> None:
 
     with (
         patch.object(orch, "_fetch_all_descendants", new=AsyncMock()) as fetch_desc,
+        patch.object(orch, "_pm_respawn_should_gate", new=AsyncMock(return_value=False)),
         patch.object(orch, "spawn_agent", new=AsyncMock()) as spawn,
     ):
         await orch._maybe_spawn_pm_closure(client, task)
@@ -97,6 +98,7 @@ async def test_skips_spawn_when_paused_and_recently_touched_iso_string() -> None
 
     with (
         patch.object(orch, "_fetch_all_descendants", new=AsyncMock()) as fetch_desc,
+        patch.object(orch, "_pm_respawn_should_gate", new=AsyncMock(return_value=False)),
         patch.object(orch, "spawn_agent", new=AsyncMock()) as spawn,
     ):
         await orch._maybe_spawn_pm_closure(client, task)
@@ -135,6 +137,7 @@ async def test_spawns_when_paused_but_heartbeat_is_stale() -> None:
             return_value="prompt",
         ),
         patch.object(orch, "_task_git_context", return_value=MagicMock()),
+        patch.object(orch, "_pm_respawn_should_gate", new=AsyncMock(return_value=False)),
         patch.object(orch, "spawn_agent", new=AsyncMock()) as spawn,
     ):
         await orch._maybe_spawn_pm_closure(client, task)
@@ -179,6 +182,7 @@ async def test_spawns_when_paused_past_closure_debounce_but_within_reaper_window
         patch.object(orch, "_auto_resume_paused_parent", new=AsyncMock()),
         patch.object(orch, "_build_pm_closure_prompt", return_value="prompt"),
         patch.object(orch, "_task_git_context", return_value=MagicMock()),
+        patch.object(orch, "_pm_respawn_should_gate", new=AsyncMock(return_value=False)),
         patch.object(orch, "spawn_agent", new=AsyncMock()) as spawn,
     ):
         await orch._maybe_spawn_pm_closure(client, task)
@@ -213,6 +217,7 @@ async def test_spawns_when_paused_but_heartbeat_missing() -> None:
             return_value="prompt",
         ),
         patch.object(orch, "_task_git_context", return_value=MagicMock()),
+        patch.object(orch, "_pm_respawn_should_gate", new=AsyncMock(return_value=False)),
         patch.object(orch, "spawn_agent", new=AsyncMock()) as spawn,
     ):
         await orch._maybe_spawn_pm_closure(client, task)
@@ -253,6 +258,7 @@ async def test_non_paused_status_not_gated_by_heartbeat() -> None:
             return_value="prompt",
         ),
         patch.object(orch, "_task_git_context", return_value=MagicMock()),
+        patch.object(orch, "_pm_respawn_should_gate", new=AsyncMock(return_value=False)),
         patch.object(orch, "spawn_agent", new=AsyncMock()) as spawn,
     ):
         await orch._maybe_spawn_pm_closure(client, task)

@@ -660,6 +660,20 @@ export function AIRoutingCard() {
       toast.error("Test the self-hosted connection first");
       return;
     }
+    // The model picker is only rendered after self-hosted mode is active, so
+    // the first switch must choose a model from the freshly discovered list.
+    // Embedding models cannot serve chat completions and should not become the
+    // default merely because they sort first.
+    const selectedModel =
+      selfHostedModel ||
+      selfHostedModels.find(
+        (model) => !model.model_name.toLowerCase().includes("embed"),
+      )?.model_name ||
+      selfHostedModels[0]?.model_name;
+    if (!selectedModel) {
+      toast.error("No self-hosted models were discovered");
+      return;
+    }
     if (
       !confirm(
         "Switch every agent to the self-hosted LLM? Per-agent pins and " +
@@ -671,8 +685,9 @@ export function AIRoutingCard() {
     try {
       await applyMode.mutateAsync({
         mode: "self_hosted",
-        ...(selfHostedModel ? { default_model: selfHostedModel } : {}),
+        default_model: selectedModel,
       });
+      setSelfHostedModel(selectedModel);
       toast.success(
         "Role/global routing now on Self-Hosted LLM — per-agent pins and complexity overrides kept",
       );

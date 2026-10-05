@@ -10,6 +10,7 @@ the shared threat service, and S1/S2/S7 in one parallel wave.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -667,3 +668,50 @@ def test_sequence_blocker_no_candidates_is_none() -> None:
         )
         is None
     )
+
+
+# ---------------------------------------------------------------------------
+# Regression: live 2026-09-30 ux-pm crash loop. A new sibling arrives at
+# sequence 0 and sorts ahead of already-stamped siblings; once stamped to the
+# same wave the pair ties and the analyzer emits the REVERSE edge.
+# ---------------------------------------------------------------------------
+
+
+def _sib(
+    i: str, seq: int, touch: list[str], assignee: str = "dev-1"
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=i,
+        priority=2,
+        sequence=seq,
+        intends_to_touch=touch,
+        adds_migration=False,
+        touches_shared=False,
+        project_id="proj",
+        assigned_to=assignee,
+        created_at=i,
+        task_type="code",
+        status="pending",
+    )
+
+
+def test_tied_waves_flip_the_collision_edge_unless_dependent_is_raised() -> None:
+    """Documents the tie hazard that ``raise_dependent_waves`` closes.
+
+    729a4ed3 was wired behind 9a9fa34b at creation. With both at sequence 1
+    the analyzer wants 729a4ed3 FIRST (created_at tie-break) -> the reverse
+    edge, which add_dependency refuses as a cycle. With the held-back sibling
+    raised to sequence 2 the pair stays consistent: no reverse edge.
+    """
+    be = _sib("be6971da", 0, ["assets/generated/*"])
+    doc = _sib("a83c7959", 0, ["docs/kb/*"], "dev-2")
+    held = _sib("729a4ed3", 1, ["scripts/blender/*", "assets/generated/*"])
+    new = _sib("9a9fa34b", 1, ["scripts/blender/*"])
+
+    tied = dev_task_collision_edges([be, doc, held, new])
+    assert ("729a4ed3", "9a9fa34b") in tied  # reverse of the wired edge
+
+    held.sequence = 2  # what raise_dependent_waves does post-stamp
+    raised = dev_task_collision_edges([be, doc, held, new])
+    assert ("729a4ed3", "9a9fa34b") not in raised
+    assert ("9a9fa34b", "729a4ed3") in raised

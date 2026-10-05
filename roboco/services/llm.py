@@ -238,6 +238,40 @@ async def probe_ollama_tags(base_url: str) -> tuple[list[str], str | None]:
         return [], "An unexpected error occurred while probing the self-hosted server."
 
 
+async def probe_self_hosted_models(base_url: str) -> tuple[list[str], str | None]:
+    """Discover models from an Ollama- or LM Studio-compatible server.
+
+    Ollama exposes ``/api/tags``; LM Studio exposes the OpenAI-compatible
+    ``/v1/models`` endpoint. Agent requests still use the Anthropic-compatible
+    endpoint that both RoboCo's Claude runtime and current LM Studio support.
+    """
+    models, ollama_error = await probe_ollama_tags(base_url)
+    if ollama_error is None and models:
+        return models, None
+
+    url = base_url.rstrip("/") + "/v1/models"
+    try:
+        async with httpx.AsyncClient(timeout=_OLLAMA_TAGS_TIMEOUT) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            data = resp.json()
+            models = [m["id"] for m in data.get("data", []) if m.get("id")]
+            return models, None
+    except httpx.TimeoutException:
+        return [], f"Connection to {base_url} timed out after {_OLLAMA_TAGS_TIMEOUT}s"
+    except httpx.ConnectError:
+        return [], f"Could not connect to {base_url} — server may be offline"
+    except httpx.HTTPStatusError as exc:
+        return [], f"Server at {base_url} returned HTTP {exc.response.status_code}"
+    except Exception as exc:
+        _log.error(
+            "Unexpected error probing self-hosted server",
+            base_url=base_url,
+            error=exc.__class__.__name__,
+        )
+        return [], "An unexpected error occurred while probing the self-hosted server."
+
+
 _OPENROUTER_MODELS_TIMEOUT = 10.0
 _OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 
@@ -461,6 +495,10 @@ INTERACTIVE_UNSUPPORTED_PROVIDERS: tuple[ModelProvider, ...] = ()
 # upgraded to the floor model at resolution, from whatever source (a pin, a
 # ROLE row, or the retired cost_tiered seed). Non-Anthropic providers are
 # untouched — this is an Anthropic-tier floor, not a provider policy.
+# Substrings that mark a model name as a Claude model; used to refuse an
+# unknown Claude-looking name instead of silently filing it under LOCAL.
+_CLAUDE_NAME_FRAGMENTS = ("claude", "sonnet", "opus", "haiku")
+
 _CAPABILITY_FLOOR_MODEL = "sonnet"
 _BELOW_FLOOR_MODEL_MARKER = "haiku"
 
@@ -527,7 +565,7 @@ class ModelRoutingService(BaseService):
         if resolved is not None and resolved.provider.enabled:
             route = await self._route_from_resolved(resolved, agent_slug)
             if route is not None:
-                return route
+                return await self._rate_limit_fallback_route(route, agent_slug)
         elif resolved is not None and not resolved.provider.enabled:
             # Configured but disabled — distinguishable from "no assignment"
             # so the bypass is surfaced, not silent. Default stays graceful (a
@@ -546,6 +584,54 @@ class ModelRoutingService(BaseService):
                     f"to the legacy Anthropic path"
                 )
         return self._legacy_route(role)
+
+    async def _rate_limit_fallback_route(
+        self, route: AgentRoute, agent_slug: str
+    ) -> AgentRoute:
+        """Swap a parked cloud route for the configured LOCAL fallback model.
+
+        Off unless ``settings.rate_limit_fallback_model`` is set. Applies only to
+        a non-LOCAL route whose provider the rate-limit tracker currently
+        reports as limited/parked, and only if the LOCAL provider is
+        reachable; every other case (and any error) returns *route* unchanged,
+        so a tracker/Redis hiccup never changes routing.
+        """
+        model = settings.rate_limit_fallback_model.strip()
+        if not model or route.provider_type == ModelProvider.LOCAL:
+            return route
+        try:
+            from roboco.services.gateway.rate_limit_tracker import (
+                RateLimitStateTracker,
+            )
+
+            if not await RateLimitStateTracker(route.provider_type.value).is_rate_limited():
+                return route
+            local = await self._find_local_provider()
+            if local is None or not local.enabled:
+                return route
+            fallback = await self._local_route_or_none(
+                _ResolvedAssignment(
+                    provider=local, model_name=model, scope=AssignmentScope.GLOBAL
+                ),
+                agent_slug,
+            )
+        except Exception as exc:
+            self.log.warning(
+                "rate-limit fallback check failed; keeping original route",
+                agent_slug=agent_slug,
+                error=str(exc),
+            )
+            return route
+        if fallback is None:
+            return route
+        self.log.warning(
+            "Provider rate-limited; routing spawn to local fallback model",
+            agent_slug=agent_slug,
+            provider=route.provider_type.value,
+            from_model=route.model_name,
+            fallback_model=model,
+        )
+        return fallback
 
     async def _resolve_assignment(
         self, agent_slug: str, role: str, complexity: str | None = None
@@ -602,7 +688,7 @@ class ModelRoutingService(BaseService):
         base_url = resolved.provider.base_url or ""
         if not base_url:
             return None  # unconfigured → fall through
-        _, error = await probe_ollama_tags(base_url)
+        _, error = await probe_self_hosted_models(base_url)
         if error is not None:
             self.log.warning(
                 "Self-hosted server unreachable; falling back to Anthropic",
@@ -712,6 +798,17 @@ class ModelRoutingService(BaseService):
         else:
             entry = MODEL_CATALOG_BY_NAME.get(model_name)
             if entry is None:
+                # A Claude-looking name that is not in the catalog is almost
+                # certainly a typo or a model this build does not know yet.
+                # Filing it under LOCAL would pass silently and then route the
+                # agent at a self-hosted server (or, if that is unreachable,
+                # quietly fall back to Anthropic), so refuse it loudly.
+                if any(f in model_name.lower() for f in _CLAUDE_NAME_FRAGMENTS):
+                    raise ValueError(
+                        f"Unknown Claude model '{model_name}'. Use one from "
+                        "GET /api/providers/catalog (it may not be deployed "
+                        "in this build yet)."
+                    )
                 # Try to route to LOCAL if a LOCAL provider is seeded — this
                 # allows self-hosted model names in mix mode without an error.
                 local_provider = await self._find_local_provider()
@@ -1023,7 +1120,7 @@ class ModelRoutingService(BaseService):
             to a Grok (xAI) model (default grok-build-0.1). Requires the xAI key.
           - "codex":       wipe role/global assignments, force-enable the OPENAI
             provider, set the GLOBAL default to a Codex model (default
-            gpt-5.3-codex). No key check — subscription-CLI auth (~/.codex),
+            gpt-5.6-luna). No key check — subscription-CLI auth (~/.codex),
             same shape as Grok/self_hosted.
           - "gemini":      wipe role/global assignments, force-enable the GEMINI
             provider, set the GLOBAL default to a Gemini model (default
@@ -1166,7 +1263,7 @@ class ModelRoutingService(BaseService):
             require_uuid(codex.id),
             ProviderUpdate(enabled=True),
         )
-        model_name = default_model or "gpt-5.3-codex"
+        model_name = default_model or "gpt-5.6-luna"
         await self.upsert_assignment(
             scope=AssignmentScope.GLOBAL,
             scope_value=None,

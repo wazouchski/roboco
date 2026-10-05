@@ -264,6 +264,8 @@ export interface Task {
   created_at: string;
   updated_at: string | null;
   claimed_at: string | null;
+  /** Last worker heartbeat; used by the task detail activity indicator. */
+  last_heartbeat_at?: string | null;
   started_at: string | null;
   completed_at: string | null;
   target_date: string | null;
@@ -783,6 +785,14 @@ export interface KBSearchResult {
   score: number;
   index_type: KBIndexType;
   metadata: Record<string, unknown>;
+}
+
+export interface KBDocument {
+  source: string;
+  content: string;
+  metadata: Record<string, unknown>;
+  chunk_count: number;
+  index_type: KBIndexType;
 }
 
 export interface KBSearchResponse {

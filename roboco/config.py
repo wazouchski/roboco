@@ -327,7 +327,13 @@ class Settings(BaseSettings):
         host = (urlparse(v).hostname or "").lower()
         if not host:
             raise ValueError("local_llm_base_url must have a host")
-        if host in {"localhost", "127.0.0.1", "::1", "roboco-ollama"}:
+        if host in {
+            "localhost",
+            "127.0.0.1",
+            "::1",
+            "roboco-ollama",
+            "host.docker.internal",
+        }:
             return v
         if host.endswith(".svc.cluster.local"):
             return v
@@ -2099,6 +2105,16 @@ class Settings(BaseSettings):
     # Distinct from claim_stale_seconds (the general claim-freshness
     # threshold); keeping them separate lets the reaper run on a longer
     # window than other claim-staleness consumers.
+    rate_limit_fallback_model: str = Field(
+        default="",
+        description=(
+            "When set (e.g. qwen36-reap), an agent whose resolved CLOUD provider "
+            "is currently rate-limited/parked is routed to this LOCAL model at "
+            "spawn instead of waiting for the provider to recover. Empty = off "
+            "(agents park and wait, the historical behaviour); override via "
+            "ROBOCO_RATE_LIMIT_FALLBACK_MODEL"
+        ),
+    )
     stale_claim_reap_seconds: int = Field(
         default=600,
         ge=60,
@@ -2167,7 +2183,7 @@ class Settings(BaseSettings):
     # The codex CLI model id pinned at spawn (`codex exec -m <id>`). Codex has
     # no reliable default model, so this must always be set explicitly.
     codex_cli_model: str = Field(
-        default="gpt-5.3-codex",
+        default="gpt-5.6-luna",
         description=(
             "Codex CLI model id passed to `codex exec -m`; override via "
             "ROBOCO_CODEX_CLI_MODEL"
@@ -2271,6 +2287,49 @@ class Settings(BaseSettings):
             "ROBOCO_KIMI_MAX_CONCURRENT only if you understand that risk"
         ),
     )
+    # A self-hosted LOCAL endpoint is commonly a single LM Studio/Ollama
+    # process with a one-slot context. Keep RoboCo's live agent count aligned
+    # with that capacity by default; operators with a genuinely concurrent
+    # local server can raise this explicitly.
+    local_max_concurrent: int = Field(
+        default=1,
+        ge=1,
+        description=(
+            "Max concurrent live LOCAL/self-hosted agent containers; "
+            "override via ROBOCO_LOCAL_MAX_CONCURRENT"
+        ),
+    )
+    # Context window of each LOCAL (self-hosted) model, in tokens, handed to Claude
+    # Code as CLAUDE_CODE_AUTO_COMPACT_WINDOW. Claude Code does not recognise a
+    # self-hosted model id ("unrecognized_model"), so it assumes a large default
+    # window and never compacts before the server's real context fills: the
+    # response is then cut mid-tool-call, the next request is refused with
+    # "exceeds the available context size", and the session exits with code 1
+    # (a "crash" that ends in a stranded-agent escalation). Format:
+    # "model=tokens,model=tokens,*=tokens" ("*" is the fallback for any other
+    # local model). Empty = unchanged behaviour. Keep each value below the
+    # server's --ctx-size, leaving room for the model's reply and thinking budget.
+    local_context_windows: str = Field(
+        default="",
+        description=(
+            "Per-model context window for LOCAL agents, e.g. "
+            "'qwen36-reap=120000,*=56000'; override via ROBOCO_LOCAL_CONTEXT_WINDOWS"
+        ),
+    )
+
+    def local_compact_window_for(self, model: str) -> int | None:
+        """Auto-compact window (tokens) for a LOCAL model, or None when unset."""
+        fallback: int | None = None
+        for item in self.local_context_windows.split(","):
+            name, sep, raw = item.partition("=")
+            name, raw = name.strip(), raw.strip()
+            if not sep or not raw.isdigit() or int(raw) <= 0:
+                continue
+            if name == model:
+                return int(raw)
+            if name == "*":
+                fallback = int(raw)
+        return fallback
     # The hummin CLI model id passed at spawn (`hummin --mode json --model
     # zai/<id>`). Bare zai-catalog id — the entrypoint prefixes the provider.
     # The `:high` suffix (Z.ai's high-thinking variant) is the operator

@@ -37,6 +37,7 @@ class CatalogEntry:
 _ANTHROPIC_DISPLAY: tuple[tuple[str, str], ...] = (
     ("opus", "Claude Opus"),
     ("sonnet", "Claude Sonnet"),
+    ("sonnet-5.5", "Claude Sonnet 5.5"),
     ("haiku", "Claude Haiku"),
 )
 
@@ -84,6 +85,7 @@ MODEL_CATALOG: tuple[CatalogEntry, ...] = (
     # --- Codex (OpenAI, official CLI) ---
     # Routes to the OPENAI provider → CodexCliProvider spawn. Subscription auth
     # (~/.codex, from `codex login`), no metered API key — parity with Grok.
+    CatalogEntry("gpt-5.6-luna", ModelProvider.OPENAI, "GPT-5.6 Luna"),
     CatalogEntry("gpt-5.3-codex", ModelProvider.OPENAI, "GPT-5.3 Codex"),
     # --- Gemini (Google, official gemini CLI) ---
     # Routes to the GEMINI provider → GeminiCliProvider spawn (OAuth login, not

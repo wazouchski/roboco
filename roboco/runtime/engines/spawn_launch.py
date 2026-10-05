@@ -768,6 +768,9 @@ class SpawnLaunchEngine(_Base):
         )
         if skip_reason:
             self._mark_task_handled(task_id)
+            # No container launched, so the dispatcher's respawn-breaker strike
+            # for this (agent, task) was not an unproductive respawn.
+            self._refund_respawn_strike(agent_id, task_id)
             logger.info(
                 skip_reason,
                 agent_id=agent_id,
@@ -1014,6 +1017,13 @@ class SpawnLaunchEngine(_Base):
             cmd.extend(["-e", f"ANTHROPIC_BASE_URL={config.provider_base_url}"])
         if config.provider_auth_token:
             cmd.extend(["-e", f"ANTHROPIC_AUTH_TOKEN={config.provider_auth_token}"])
+        # A self-hosted model has a small, known context window that Claude Code
+        # cannot discover (see Settings.local_context_windows); tell it, so it
+        # compacts its history before the server's window overflows.
+        if config.provider_type == ModelProvider.LOCAL.value:
+            window = settings.local_compact_window_for(config.model)
+            if window:
+                cmd.extend(["-e", f"CLAUDE_CODE_AUTO_COMPACT_WINDOW={window}"])
 
     @staticmethod
     def _append_manifest_args(
@@ -1803,12 +1813,16 @@ class SpawnLaunchEngine(_Base):
         KIMI is capped by default: every Kimi container shares one OAuth
         refresh-token chain (see ``settings.kimi_max_concurrent``) — a second
         concurrent container risks forking it and revoking fleet-wide Kimi
-        auth. HUMMIN defaults to uncapped (a static per-spawn env key — no
-        shared chain to protect); its Settings knob exists only for an
-        operator who observes Z.ai throttling the account.
+        auth. LOCAL is also capped by default because a self-hosted endpoint
+        is commonly a single LM Studio/Ollama context slot. HUMMIN defaults to
+        uncapped (a static per-spawn env key — no shared chain to protect); its
+        Settings knob exists only for an operator who observes Z.ai throttling
+        the account.
         """
         if provider_type == ModelProvider.KIMI.value:
             return settings.kimi_max_concurrent
+        if provider_type == ModelProvider.LOCAL.value:
+            return settings.local_max_concurrent
         if provider_type == ModelProvider.HUMMIN.value:
             return settings.hummin_max_concurrent
         return None
@@ -1850,8 +1864,8 @@ class SpawnLaunchEngine(_Base):
         """Why ``spawn_agent`` should bail before launch, or None to proceed.
 
         Checked in order: provider-parked (rate-limited/overloaded), then the
-        provider's concurrency cap (currently kimi-only, see
-        ``_provider_concurrency_cap``). The returned string is both the skip
+        provider's concurrency cap (see ``_provider_concurrency_cap``). The
+        returned string is both the skip
         reason and the log event name — same shape both callers already used.
         *exclude_agent_id* is the agent this spawn is FOR: its own registered
         instance must never count against its own capacity check.
@@ -1859,7 +1873,7 @@ class SpawnLaunchEngine(_Base):
         if await self._provider_spawn_parked(provider_type):
             return "Spawn skipped: provider rate-limited (parked)"
         if self._provider_spawn_at_capacity(provider_type, exclude_agent_id):
-            return "Spawn skipped: kimi concurrency cap reached"
+            return f"Spawn skipped: {provider_type} concurrency cap reached"
         return None
 
     def _bail_prepared_instance(

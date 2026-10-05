@@ -1,0 +1,38 @@
+services:
+  orchestrator:
+    build:
+      context: .
+      dockerfile: docker/orchestrator.Dockerfile
+    image: roboco-orchestrator-local
+    environment:
+      - ROBOCO_AGENT_IMAGE_REGISTRY=
+      - ROBOCO_AGENT_IMAGE_TAG=
+      - ROBOCO_LOCAL_MAX_CONCURRENT=4
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /home/wazouchski/.claude:/root/.claude
+      - ./roboco:/app/roboco
+      - ./pyproject.toml:/app/pyproject.toml
+      - ./uv.lock:/app/uv.lock
+      - ./README.md:/app/README.md
+      - ./data:/data
+    cap_add:
+      - SYS_PTRACE
+    networks:
+      - default
+      - data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+      agent-base-image:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

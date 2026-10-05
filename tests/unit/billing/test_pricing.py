@@ -826,3 +826,40 @@ class TestInputPricePerMillion:
 
     def test_case_insensitive(self) -> None:
         assert input_price_per_million("HAIKU") == input_price_per_million("haiku")
+
+
+# Sonnet 5.5 - own price row ($2 in / $10 out / $0.20 cache read / $2.50 5-minute
+# cache write). Its id contains "claude-sonnet-5", so without a dedicated row the
+# longest-substring lookup would bill it at the Sonnet 5 rates.
+_SONNET_55_ID = "claude-sonnet-5-5"
+_SONNET_55_INPUT = 2.00
+_SONNET_55_OUTPUT = 10.00
+_SONNET_55_CACHE_READ = 0.20
+_SONNET_55_CACHE_WRITE = 2.50
+_SONNET_5_CACHE_WRITE = 0.50
+
+
+def test_sonnet_55_uses_its_own_price_row() -> None:
+    cost = calculate_cost(
+        _SONNET_55_ID,
+        tokens_input=_M,
+        tokens_output=_M,
+        tokens_cache_read=_M,
+        tokens_cache_write=_M,
+    )
+    expected = (
+        _SONNET_55_INPUT
+        + _SONNET_55_OUTPUT
+        + _SONNET_55_CACHE_READ
+        + _SONNET_55_CACHE_WRITE
+    )
+    assert cost == pytest.approx(expected)
+
+
+def test_sonnet_55_cache_write_is_not_the_sonnet_5_rate() -> None:
+    # Distinguishes the dedicated row from the shorter "claude-sonnet-5" prefix row.
+    cost_55 = calculate_cost(_SONNET_55_ID, 0, 0, tokens_cache_write=_M)
+    cost_5 = calculate_cost("claude-sonnet-5", 0, 0, tokens_cache_write=_M)
+    assert cost_55 == pytest.approx(_SONNET_55_CACHE_WRITE)
+    assert cost_5 == pytest.approx(_SONNET_5_CACHE_WRITE)
+

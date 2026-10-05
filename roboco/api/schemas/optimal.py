@@ -163,6 +163,16 @@ class DocumentListResponse(BaseModel):
     index_type: str
 
 
+class DocumentReadResponse(BaseModel):
+    """Full content reassembled from an indexed document's chunks."""
+
+    source: str
+    content: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    chunk_count: int
+    index_type: str
+
+
 class ClearIndexResponse(BaseModel):
     """Response from clearing an index."""
 

@@ -344,6 +344,32 @@ class DispatchClaimEngine(_Base):
                 error=str(e),
             )
 
+    async def _auto_start_claimed_parent(
+        self, client: httpx.AsyncClient, task_id: str
+    ) -> None:
+        """Move a claimed parent to in_progress right before closure respawn.
+
+        Symmetric to ``_auto_resume_paused_parent``: every descendant is
+        terminal at this point, and ``claimed -> in_progress`` is
+        lifecycle-valid (it is what ``i_will_work_on`` performs). Best-effort;
+        a failure must not block the spawn.
+        """
+        try:
+            await client.patch(
+                f"{self._api_url}/tasks/{task_id}",
+                json={"status": "in_progress"},
+            )
+            logger.info(
+                "Auto-started claimed parent for PM closure respawn",
+                task_id=task_id,
+            )
+        except Exception as e:
+            logger.error(
+                "Failed to auto-start claimed parent",
+                task_id=task_id,
+                error=str(e),
+            )
+
     def _is_claim_in_flight(self, agent_id: str) -> bool:
         """True if `agent_id` has an unexpired claim/spawn in flight.
 
@@ -939,6 +965,11 @@ class DispatchClaimEngine(_Base):
             await self._auto_resume_paused_parent(client, task_id)
         elif parent_status == "blocked":
             await self._auto_recover_blocked_parent(client, task_id)
+        elif parent_status == "claimed":
+            # A claimed-but-never-started parent: submit_up / complete both
+            # require in_progress, so a PM spawned onto it is rejected
+            # (invalid_state) and escalates. Start it first.
+            await self._auto_start_claimed_parent(client, task_id)
         if parent_status not in ("claimed", "in_progress", "paused"):
             return False, None
         return await self._try_auto_submit(client, task, pm_id)

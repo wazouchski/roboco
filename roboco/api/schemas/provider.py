@@ -286,7 +286,7 @@ class ApplyModeRequest(BaseModel):
     - mode="grok": clear every assignment; force-enable the GROK provider;
       set GLOBAL default to `default_model` (default grok-build-0.1).
     - mode="codex": clear every assignment; force-enable the OPENAI provider;
-      set GLOBAL default to `default_model` (default gpt-5.3-codex). No key
+      set GLOBAL default to `default_model` (default gpt-5.6-luna). No key
       check — subscription-CLI auth (~/.codex), same shape as grok.
     - mode="gemini": clear every assignment; force-enable the GEMINI provider;
       set GLOBAL default to `default_model` (default gemini-2.5-pro). No key

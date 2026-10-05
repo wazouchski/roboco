@@ -191,6 +191,8 @@ async def test_maybe_spawn_pm_closure_spawns_team_resolved_pm_on_route_failure()
     orch._is_agent_active = MagicMock(return_value=False)
     orch._closure_handled_without_pm = AsyncMock(return_value=(False, None))
     orch._build_pm_closure_prompt = MagicMock(return_value="PROMPT")
+    orch._build_pm_review_prompt = MagicMock(return_value="REVIEW")
+    orch._pm_respawn_should_gate = AsyncMock(return_value=False)
     orch._task_git_context = MagicMock(return_value=None)
     orch.spawn_agent = AsyncMock()
     orch._ensure_review_pm_assigned = AsyncMock(return_value=None)  # route failed

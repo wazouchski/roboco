@@ -29,6 +29,7 @@ from roboco.models.base import (
     Team,
 )
 from roboco.models.task import TaskCreateRequest
+from roboco.services.base import ConflictError
 from roboco.services.learning import LearningType
 from roboco.services.task import (
     VIDEO_SOURCE,
@@ -625,6 +626,104 @@ async def test_wire_sibling_collision_dag_notifies_only_for_new_edges() -> None:
             await svc.wire_sibling_collision_dag(parent_id)
     mock_ns.send_collision_sequencing_notification.assert_awaited_once()
     assert add_dep_mock.await_count == wiring_passes
+
+
+@pytest.mark.asyncio
+async def test_wire_sibling_collision_dag_skips_edge_that_would_cycle() -> None:
+    """A reversed analyzer edge is skipped, not raised (live 2026-09-30).
+
+    A sort tie between two stamped siblings can make the analyzer emit the
+    reverse of an edge already wired. `add_dependency` refuses it with a
+    cycle ConflictError; propagating that rolled back every delegate under
+    the parent. The existing order wins, later edges still wire, and no
+    notification fires for the skipped pair.
+    """
+    parent_id = uuid4()
+    a, b, c = uuid4(), uuid4(), uuid4()
+    edges = [(a, b), (b, c)]
+    svc = TaskService(MagicMock(flush=AsyncMock()))
+    _bind(
+        svc,
+        "get_subtasks",
+        AsyncMock(return_value=[_build_task(id=i) for i in (a, b, c)]),
+    )
+    add_dep_mock = AsyncMock(
+        side_effect=[ConflictError("would close a dependency cycle"), True]
+    )
+    _bind(svc, "add_dependency", add_dep_mock)
+    mock_ns = MagicMock()
+    mock_ns.send_collision_sequencing_notification = AsyncMock()
+    with (
+        patch(
+            "roboco.services.sequencing.dev_task_collision_edges",
+            return_value=edges,
+        ),
+        patch(
+            "roboco.services.notification.NotificationService",
+            return_value=mock_ns,
+        ),
+    ):
+        await svc.wire_sibling_collision_dag(parent_id)
+    assert add_dep_mock.await_count == len(edges)
+    mock_ns.send_collision_sequencing_notification.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_raise_dependent_waves_lifts_held_back_sibling_and_cascades() -> None:
+    """The older sibling held behind a new task is raised above it, transitively."""
+    parent_id = uuid4()
+    new = _build_task(id=uuid4(), parent_task_id=parent_id, sequence=1)
+    held = _build_task(
+        id=uuid4(),
+        parent_task_id=parent_id,
+        sequence=1,
+        dependency_ids=[new.id],
+    )
+    tail = _build_task(
+        id=uuid4(),
+        parent_task_id=parent_id,
+        sequence=2,
+        dependency_ids=[held.id],
+    )
+    done = _build_task(
+        id=uuid4(),
+        parent_task_id=parent_id,
+        sequence=0,
+        status=TaskStatus.COMPLETED,
+        dependency_ids=[new.id],
+    )
+    unrelated = _build_task(
+        id=uuid4(), parent_task_id=parent_id, sequence=0, dependency_ids=[]
+    )
+    svc = TaskService(MagicMock(flush=AsyncMock()))
+    _bind(svc, "get", AsyncMock(return_value=new))
+    _bind(
+        svc,
+        "get_subtasks",
+        AsyncMock(return_value=[new, held, tail, done, unrelated]),
+    )
+    set_seq = AsyncMock()
+    _bind(svc, "set_sequence", set_seq)
+    await svc.raise_dependent_waves(new.id)
+    # held: 1 -> 2 (above new); tail: 2 -> 3 (above held). The terminal
+    # dependent, the unrelated sibling and the new task itself are untouched.
+    assert {c.args for c in set_seq.await_args_list} == {(held.id, 2), (tail.id, 3)}
+
+
+@pytest.mark.asyncio
+async def test_raise_dependent_waves_never_lowers_a_sequence() -> None:
+    parent_id = uuid4()
+    new = _build_task(id=uuid4(), parent_task_id=parent_id, sequence=1)
+    high = _build_task(
+        id=uuid4(), parent_task_id=parent_id, sequence=5, dependency_ids=[new.id]
+    )
+    svc = TaskService(MagicMock(flush=AsyncMock()))
+    _bind(svc, "get", AsyncMock(return_value=new))
+    _bind(svc, "get_subtasks", AsyncMock(return_value=[new, high]))
+    set_seq = AsyncMock()
+    _bind(svc, "set_sequence", set_seq)
+    await svc.raise_dependent_waves(new.id)
+    set_seq.assert_not_awaited()
 
 
 @pytest.mark.asyncio

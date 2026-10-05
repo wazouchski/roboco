@@ -47,6 +47,7 @@ command -v opencode >/dev/null || {
 # (the agent workspace for developer/documenter roles) — a project-local
 # opencode.json dropped in /app would never be found there, while the global
 # config home loads regardless of cwd.
+mkdir -p ~/.config/opencode
 ( cd /app && python -m roboco.llm.providers.openrouter_cli_config )
 
 # Prompt-injection guard (parity with the Claude/grok/kimi path): the task

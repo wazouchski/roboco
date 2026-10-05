@@ -161,9 +161,10 @@ def test_render_mcp_block_passthrough_with_env() -> None:
         "-m",
         "roboco.mcp.flow_server",
     ]
-    assert flow["env"]["ROBOCO_AGENT_TOKEN"] == "tok-123"
+    assert flow["environment"]["ROBOCO_AGENT_TOKEN"] == "tok-123"
+    assert "env" not in flow  # opencode ignores a bare `env` key
     do = rendered["roboco-do"]
-    assert "env" not in do  # no env in source → no env in rendered
+    assert "environment" not in do and "env" not in do  # no env in source → none rendered
 
 
 def test_render_mcp_block_empty_servers() -> None:

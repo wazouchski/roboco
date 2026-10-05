@@ -46,6 +46,7 @@ def _ready_orch() -> Any:
     orch._build_pm_closure_prompt = MagicMock(return_value="PROMPT")
     orch._task_git_context = MagicMock(return_value=None)
     orch.spawn_agent = AsyncMock()
+    orch._pm_respawn_should_gate = AsyncMock(return_value=False)
     orch._auto_resume_paused_parent = AsyncMock()
     orch._auto_recover_blocked_parent = AsyncMock()
     return orch

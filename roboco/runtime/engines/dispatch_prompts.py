@@ -646,6 +646,10 @@ only the HOW (the solution); the WHAT is already decided upstream.
 Start by calling evidence(task_id="{task_id}") for full details, acceptance
 criteria, and the upstream parent/ancestor context (the original intake analysis).
 
+If a verb's response carries a `next` field (for example give_me_work() returning
+"call i_will_work_on(task_id=..., plan=...) to start"), do exactly that next
+step. Do not call give_me_work() again for a task you have already been handed.
+
 When out of work: i_am_idle().
 """
 
@@ -672,7 +676,12 @@ TEAM: {team}
 2. Review the implementation against EVERY acceptance criterion.
    Run/read tests; sanity-check the diff for regressions, security,
    and scope creep.
-3. Decide:
+3. note(scope="learning", task_id="{task_id}", text="<what this review
+   surfaced>") — REQUIRED BEFORE step 4. The gateway refuses pass() and
+   fail() until a learning note exists for this task. Write it ONCE. A note
+   is NOT a verdict: do not write "Verdict: PASS/FAIL" as a note, and do not
+   keep adding notes. Go straight to step 4 and call pass() or fail().
+4. Decide:
    - PASS: pass(task_id="{task_id}",
             notes="<>=80 chars: what you verified, which AC, evidence>")
      — transitions awaiting_qa → awaiting_documentation.
@@ -680,10 +689,14 @@ TEAM: {team}
             issues=["concrete issue 1", "concrete issue 2", ...])
      — transitions to needs_revision; each issue must be specific and
      actionable.
-4. note(scope='reflect'|'learning', task_id="{task_id}", text=...)
-   for anything worth flagging.
-5. give_me_work() to pick up the next QA item,
+5. note(scope='reflect', task_id="{task_id}", text=...) for anything else
+   worth flagging (optional).
+6. give_me_work() to pick up the next QA item,
    or i_am_idle() if the queue is empty.
+
+If the gateway refuses pass()/fail() for a missing prerequisite, call the verb
+it names (usually the note in step 3) and retry. Do NOT call i_am_blocked
+during QA review: it is invalid in awaiting_qa and only loops.
 """
 
     def _build_pr_review_prompt(self, task: dict[str, Any]) -> str:

@@ -58,7 +58,7 @@ from roboco.services.base import NotFoundError
 from roboco.services.llm import (
     get_model_routing_service,
     probe_nebius_models,
-    probe_ollama_tags,
+    probe_self_hosted_models,
     probe_openrouter_models,
 )
 from roboco.services.provider import ProviderUpdate, get_provider_service
@@ -712,7 +712,7 @@ async def test_self_hosted_connection(
             ),
         )
 
-    models, error = await probe_ollama_tags(local.base_url)
+    models, error = await probe_self_hosted_models(local.base_url)
     if error is not None:
         return SelfHostedTestResponse(ok=False, error=error)
     return SelfHostedTestResponse(ok=True, model_count=len(models))
@@ -745,7 +745,7 @@ async def get_self_hosted_models(
             ),
         )
 
-    model_names, error = await probe_ollama_tags(local.base_url)
+    model_names, error = await probe_self_hosted_models(local.base_url)
     if error is not None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

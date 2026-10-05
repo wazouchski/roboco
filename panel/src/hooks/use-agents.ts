@@ -326,17 +326,20 @@ export function useAgents() {
   // roster itself would be circular (never changes).
   const statusEpoch =
     orchestratorStatus?.agents
-      ?.map((a) => `${a.agent_id}:${a.state}`)
+      ?.map((a) => `${a.agent_id}:${a.state}:${a.task_id ?? ""}`)
       .join(",") ?? "none";
 
   return useQuery({
     queryKey: [...agentKeys.all, "roster", rosterKey, statusEpoch],
     queryFn: async (): Promise<Agent[]> => {
       // Build a map of agent statuses from the orchestrator status array
-      const statusMap = new Map<string, string>();
+      const statusMap = new Map<string, { state: string; taskId: string | null }>();
       if (orchestratorStatus?.agents) {
         for (const agentStatus of orchestratorStatus.agents) {
-          statusMap.set(agentStatus.agent_id, agentStatus.state);
+          statusMap.set(agentStatus.agent_id, {
+            state: agentStatus.state,
+            taskId: agentStatus.task_id,
+          });
         }
       }
 
@@ -347,10 +350,11 @@ export function useAgents() {
 
       // Enrich with live status from orchestrator
       return base.map((agent) => {
-        const liveState = statusMap.get(agent.agent_id);
+        const liveStatus = statusMap.get(agent.agent_id);
         return {
           ...agent,
-          status: (liveState as AgentState) ?? agent.status,
+          status: (liveStatus?.state as AgentState) ?? agent.status,
+          current_task_id: liveStatus?.taskId ?? null,
         };
       });
     },

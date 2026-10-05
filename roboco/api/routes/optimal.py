@@ -28,6 +28,7 @@ from roboco.api.schemas.optimal import (
     DecisionRecordResponse,
     DocumentListItem,
     DocumentListResponse,
+    DocumentReadResponse,
     ErrorRecordRequest,
     ErrorRecordResponse,
     ErrorSearchRequest,
@@ -627,6 +628,40 @@ async def list_documents(
         total=total,
         index_type=index_type,
     )
+
+
+@router.get("/kb/{index_type}/document", response_model=DocumentReadResponse)
+async def read_document(
+    index_type: str,
+    source: str,
+    agent: CurrentAgentContext,
+    permissions: PermissionServiceDep,
+) -> DocumentReadResponse | JSONResponse:
+    """Read the full indexed content for a source document."""
+    denied = _kb_denial_response(permissions, agent, KBAction.VIEW_STATS)
+    if denied is not None:
+        return denied
+    try:
+        idx_type = IndexType(index_type)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid index type: {index_type}",
+        ) from e
+
+    service = await get_optimal_service()
+    if not service.is_index_registered(idx_type):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Index '{index_type}' is not available",
+        )
+    document = await service.get_indexed_document(idx_type, source)
+    if document is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Indexed document not found",
+        )
+    return DocumentReadResponse(index_type=index_type, **document)
 
 
 @router.post("/kb/refresh", response_model=RefreshIndexResponse)

@@ -68,7 +68,7 @@ def test_render_config_toml_no_mcp_servers_key_when_no_servers() -> None:
 
 
 def test_sandbox_level_developer_is_workspace_write() -> None:
-    assert cc.sandbox_level_for_role("developer") == "workspace-write"
+    assert cc.sandbox_level_for_role("developer") == "danger-full-access"
 
 
 def test_sandbox_level_other_delivery_roles_are_read_only() -> None:
@@ -81,9 +81,15 @@ def test_sandbox_level_other_delivery_roles_are_read_only() -> None:
 
 def test_codex_cli_args_for_role_carries_sandbox_and_skip_git_check() -> None:
     dev_args = cc.codex_cli_args_for_role("developer")
-    assert dev_args == ["--sandbox", "workspace-write", "--skip-git-repo-check"]
+    assert dev_args == [
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--skip-git-repo-check",
+    ]
     qa_args = cc.codex_cli_args_for_role("qa")
-    assert qa_args == ["--sandbox", "read-only", "--skip-git-repo-check"]
+    assert qa_args == [
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--skip-git-repo-check",
+    ]
 
 
 def test_render_execpolicy_rules_covers_git_mutation_destructive_and_raw_pm() -> None:

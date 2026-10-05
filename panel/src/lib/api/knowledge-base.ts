@@ -11,6 +11,7 @@ import {
   type KBSearchRequest,
   type KBSearchResponse,
   type KBSearchResult,
+  type KBDocument,
   type RAGQueryRequest,
   type RAGQueryResponse,
   type KBStats,
@@ -337,6 +338,30 @@ async function listDocuments(
     index_type: string;
   }>(`/optimal/kb/${indexType}/documents`, { params });
   return { documents: response.data.documents, total: response.data.total };
+}
+
+async function getDocument(
+  indexType: KBIndexType,
+  source: string,
+): Promise<KBDocument> {
+  if (isMockMode()) {
+    const result = mockSearchResults.find(
+      (item) => item.index_type === indexType && item.source === source,
+    );
+    return {
+      source,
+      content: result?.content ?? "Mock document content is unavailable.",
+      metadata: result?.metadata ?? {},
+      chunk_count: result ? 1 : 0,
+      index_type: indexType,
+    };
+  }
+
+  const response = await api.get<KBDocument>(
+    `/optimal/kb/${indexType}/document`,
+    { params: { source } },
+  );
+  return response.data;
 }
 
 // =============================================================================
@@ -768,6 +793,7 @@ export const knowledgeBaseApi = {
 
   // Browse
   listDocuments,
+  getDocument,
 
   // Index Management
   deleteIndex,

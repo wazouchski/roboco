@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any
 
 _RATE_LIMIT_PATTERN = re.compile(
-    r"(\b429\b|rate.?limit|too many requests|quota|insufficient_quota)",
+    r"(\b429\b|rate.?limit|usage.?limit|too many requests|quota|insufficient_quota)",
     re.IGNORECASE,
 )
 _AUTH_FAILURE_PATTERN = re.compile(

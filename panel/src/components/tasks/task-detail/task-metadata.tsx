@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Task, Complexity, TaskNature } from "@/types";
+import { Task, TaskStatus, Complexity, TaskNature } from "@/types";
 import { useUpdateTask } from "@/hooks/use-tasks";
+import { useAgents } from "@/hooks/use-agents";
 import { useProject } from "@/hooks/use-projects";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -27,6 +28,7 @@ import {
   Hash,
   GitPullRequest,
   ExternalLink,
+  Activity,
 } from "lucide-react";
 import { toast } from "sonner";
 import { getAgentDisplayName, resolveToSlug } from "@/lib/agent-utils";
@@ -88,6 +90,63 @@ function formatRelativeTime(date: string | null): string {
   return formatDate(date);
 }
 
+function activityState(task: Task, liveWorker?: { name: string; agent_id: string }): {
+  label: string;
+  detail: string;
+  className: string;
+} {
+  if (
+    task.status === TaskStatus.COMPLETED ||
+    task.status === TaskStatus.CANCELLED
+  ) {
+    return {
+      label: "Finished",
+      detail: "No worker is expected to be active.",
+      className: "text-muted-foreground",
+    };
+  }
+  if (task.status === TaskStatus.PAUSED) {
+    return {
+      label: "Paused",
+      detail: "Work is intentionally suspended.",
+      className: "text-yellow-600 dark:text-yellow-400",
+    };
+  }
+  if (liveWorker) {
+    return {
+      label:
+        task.status === TaskStatus.PENDING ? "Active — planning" : "Active",
+      detail: `${liveWorker.name} is currently working on this task (${liveWorker.agent_id}).`,
+      className: "text-green-600 dark:text-green-400",
+    };
+  }
+  if (task.status === TaskStatus.PENDING) {
+    return {
+      label: "Queued",
+      detail: "Waiting for an eligible agent to claim it.",
+      className: "text-muted-foreground",
+    };
+  }
+
+  const heartbeat = task.last_heartbeat_at
+    ? Date.now() - new Date(task.last_heartbeat_at).getTime()
+    : null;
+  if (heartbeat !== null && heartbeat < 90_000) {
+    return {
+      label: "Active",
+      detail: `Last heartbeat ${formatRelativeTime(task.last_heartbeat_at ?? null)}.`,
+      className: "text-green-600 dark:text-green-400",
+    };
+  }
+  return {
+    label: "Waiting for heartbeat",
+    detail: task.claimed_at
+      ? `Claimed ${formatRelativeTime(task.claimed_at)}; no recent heartbeat.`
+      : "Claimed but not yet reporting activity.",
+    className: "text-orange-600 dark:text-orange-400",
+  };
+}
+
 function formatDateForInput(date: string | null): string {
   if (!date) return "";
   const d = new Date(date);
@@ -96,8 +155,13 @@ function formatDateForInput(date: string | null): string {
 
 export function TaskMetadata({ task }: TaskMetadataProps) {
   const updateTask = useUpdateTask();
+  const { data: agents } = useAgents();
   const { data: project } = useProject(task.project_id ?? "");
   const branchHref = branchUrl(project?.git_url, task.branch_name);
+  const liveWorker = agents?.find(
+    (agent) => agent.current_task_id === task.id,
+  );
+  const activity = activityState(task, liveWorker);
 
   // Editing states - use local state only while editing
   const [editingAssigned, setEditingAssigned] = useState(false);
@@ -316,6 +380,42 @@ export function TaskMetadata({ task }: TaskMetadataProps) {
               </span>
             </HelpTip>
           )}
+        </CardContent>
+      </Card>
+
+      {/* Live operational activity — deliberately shows status/heartbeat only,
+          never model reasoning or private prompt content. */}
+      <Card className="col-span-2 border-dashed">
+        <CardContent className="pt-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Activity className="h-4 w-4" />
+              Agent Activity
+            </div>
+            <span className={`font-medium ${activity.className}`}>
+              <span
+                className={`mr-2 inline-block h-2 w-2 rounded-full align-middle ${
+                    activity.label.startsWith("Active")
+                    ? "bg-green-500 animate-pulse"
+                    : activity.label === "Waiting for heartbeat"
+                      ? "bg-orange-500"
+                        : activity.label === "Queued"
+                        ? "bg-slate-400"
+                        : "bg-yellow-500"
+                }`}
+              />
+              {activity.label}
+            </span>
+          </div>
+          <div className="mt-1 text-sm text-muted-foreground">
+            {activity.detail}
+          </div>
+          <div className="mt-2 text-xs text-muted-foreground">
+            Status: <span className="font-medium">{task.status}</span>
+            {task.work_session?.status && (
+              <> · Work session: <span className="font-medium">{task.work_session.status}</span></>
+            )}
+          </div>
         </CardContent>
       </Card>
 

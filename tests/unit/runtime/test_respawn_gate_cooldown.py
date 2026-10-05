@@ -1,22 +1,14 @@
-"""A tripped respawn breaker self-heals after a cooldown.
+"""A tripped respawn breaker stays parked until an explicit reset.
 
-2026-07-06: pr-reviewer-1 wedged at count=63 because migration 051 made the
-PM-respawn counter DB-durable and the breaker had no reset path once tripped
-— the only reset was a task status change, which can't happen while the
-breaker blocks the spawn. A deploy that fixed the underlying loop (auth/
-prompt/schema) couldn't clear the wedge without manual ``DELETE FROM
-respawn_tracker`` surgery. The tripped breaker now freezes ``last_check`` at
-the trip tick and, after ``pm_respawn_trip_cooldown_seconds``, lets ONE spawn
-through. A still-wedged task re-trips after the threshold (bounded re-burn); a
-fixed one advances and the status-change path fully resets. Restore re-stamps
-``last_check`` to now, so a freshly restored row still trips immediately
-(durability preserved) — only a row tripped longer than the cooldown self-heals.
+The old cooldown retry reopened unchanged loops and generated repeated
+stranded-agent notifications. A tripped task now remains gated until its
+status/assignment changes or an operator explicitly resets its tracker.
 """
 
 from __future__ import annotations
 
 import contextlib
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -63,8 +55,8 @@ async def _trip(orch: AgentOrchestrator, slug: str, task: dict[str, Any]) -> Non
 
 
 @pytest.mark.asyncio
-async def test_tripped_breaker_self_heals_after_cooldown() -> None:
-    """count past threshold + stale last_check -> next tick lets the spawn through."""
+async def test_tripped_breaker_stays_gated_after_cooldown() -> None:
+    """An unchanged tripped task remains parked after the old cooldown."""
     orch = _new_orchestrator()
     task_id = str(uuid4())
     task = {"id": task_id, "status": "pending"}
@@ -76,20 +68,14 @@ async def test_tripped_breaker_self_heals_after_cooldown() -> None:
             orch._pm_respawn_tracker[key]["count"] > orch._PM_RESPAWN_MAX_UNPRODUCTIVE
         )
 
-        # The durable row's last_check is stale — the trip happened >cooldown ago
-        # (e.g. a deploy fixed the underlying loop and the orchestrator restarted).
-        orch._pm_respawn_tracker[key]["last_check"] = datetime.now(UTC) - timedelta(
-            seconds=orch._PM_RESPAWN_TRIP_COOLDOWN_SECONDS + 60
-        )
-        # Cooldown elapsed -> reset count=1, allow the spawn (self-heal).
-        assert await orch._pm_respawn_should_gate("pr-reviewer-1", task) is False
-        assert orch._pm_respawn_tracker[key]["count"] == 1
-        assert orch._pm_respawn_tracker[key]["notified"] is False
+        assert await orch._pm_respawn_should_gate("pr-reviewer-1", task) is True
+        assert orch._pm_respawn_tracker[key]["count"] > orch._PM_RESPAWN_MAX_UNPRODUCTIVE
+        assert orch._pm_respawn_tracker[key]["notified"] is True
 
 
 @pytest.mark.asyncio
-async def test_tripped_breaker_stays_gated_within_cooldown() -> None:
-    """A fresh trip keeps gating; the count is frozen, not climbing every tick."""
+async def test_tripped_breaker_stays_gated_and_quiet() -> None:
+    """A tripped task stays gated and its count remains frozen."""
     orch = _new_orchestrator()
     task_id = str(uuid4())
     task = {"id": task_id, "status": "pending"}
@@ -105,27 +91,18 @@ async def test_tripped_breaker_stays_gated_within_cooldown() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cooldown_retrip_bounds_reburn() -> None:
-    """After a cooldown reset, a still-wedged task re-trips only after the
-    threshold (bounded re-burn), not immediately."""
+async def test_status_change_is_the_reset_path() -> None:
+    """A real task-state change still resets the parked breaker."""
     orch = _new_orchestrator()
     task_id = str(uuid4())
     task = {"id": task_id, "status": "pending"}
     with _patches():
         await _trip(orch, "be-dev-1", task)
         key = ("be-dev-1", task_id)
-        # Force the cooldown to elapse and consume the reset.
-        orch._pm_respawn_tracker[key]["last_check"] = datetime.now(UTC) - timedelta(
-            seconds=orch._PM_RESPAWN_TRIP_COOLDOWN_SECONDS + 1
-        )
+        task["status"] = "in_progress"
         assert await orch._pm_respawn_should_gate("be-dev-1", task) is False
-        # Still wedged (status never changes): re-trip after threshold+1 ticks.
-        gated = False
-        for _ in range(orch._PM_RESPAWN_MAX_UNPRODUCTIVE + 1):
-            if await orch._pm_respawn_should_gate("be-dev-1", task):
-                gated = True
-                break
-        assert gated, "a still-wedged task must re-trip after the threshold"
+        assert orch._pm_respawn_tracker[key]["count"] == 1
+        assert orch._pm_respawn_tracker[key]["notified"] is False
 
 
 @pytest.mark.asyncio

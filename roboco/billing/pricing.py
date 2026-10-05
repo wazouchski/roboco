@@ -75,6 +75,11 @@ _PRICING: list[tuple[str, float, float, float, float]] = [
     # platform.claude.com/docs/en/about-claude/pricing). Cache read $0.20;
     # cache write at the usual ~25%-of-input convention.
     ("claude-sonnet-5", 2.00, 10.00, 0.20, 0.50),
+    # Sonnet 5.5 - $2.00 in / $10.00 out / $0.20 cache read; $2.50 is the 5-minute cache write
+    # rate (the 1-hour write rate, $4.00, has no column in this table). "claude-sonnet-5-5" must
+    # have its own row: it contains "claude-sonnet-5" as a substring, so without this row the
+    # longest-match lookup would silently bill it at the Sonnet 5 rates above.
+    ("claude-sonnet-5-5", 2.00, 10.00, 0.20, 2.50),
     # Haiku family
     ("claude-haiku-4", 1.00, 5.00, 0.10, 1.25),
     ("claude-haiku-3-5", 1.00, 5.00, 0.10, 1.25),

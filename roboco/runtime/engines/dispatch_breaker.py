@@ -1196,27 +1196,21 @@ class DispatchBreakerEngine(_Base):
         record: dict[str, Any],
         now: datetime,
     ) -> bool | None:
-        """Self-heal a previously-tripped gate after a cooldown.
+        """Keep a tripped gate closed until an explicit state transition.
 
-        Returns True to keep gating, False to let the spawn through after a
-        cooldown reset, or None when the gate hasn't tripped yet (caller
-        continues to the increment path). last_check is frozen at the trip
-        tick; this branch returns before the increment below updates it.
+        A cooldown-based retry caused a notification storm: each unchanged
+        task was reopened, retried, retripped, and notified again.  A task
+        that has exhausted automatic recovery must remain parked until its
+        status/assignment changes or an operator explicitly resets the
+        tracker.  This also makes the durable ``notified`` marker truly
+        one-shot across reconciliation cycles and process restarts.
         """
         if not (
             record["count"] > self._PM_RESPAWN_MAX_UNPRODUCTIVE
             and record.get("notified")
         ):
             return None
-        elapsed: bool = (now - record["last_check"]).total_seconds() > (
-            self._PM_RESPAWN_TRIP_COOLDOWN_SECONDS
-        )
-        if elapsed:
-            record["count"] = 1
-            record["last_check"] = now
-            record["notified"] = False
-            self._schedule_respawn_persist(agent_slug, str(task_id), record)
-        return not elapsed
+        return True
 
     async def _pm_respawn_should_gate(
         self, agent_slug: str, task: dict[str, Any]
@@ -1313,6 +1307,27 @@ class DispatchBreakerEngine(_Base):
                 await self._mark_task_stalled(task_id)
                 await self._notify_stuck_agent(agent_slug, task_id, current_status)
         return tripped
+
+    def _refund_respawn_strike(self, agent_slug: str, task_id: str | None) -> None:
+        """Give back the strike ``_pm_respawn_should_gate`` took for this spawn.
+
+        The gate counts a strike BEFORE ``spawn_agent`` runs. When ``spawn_agent``
+        then bails without launching a container (provider concurrency cap or
+        rate-limit park) nothing was respawned and nothing could have advanced,
+        so the strike is not an unproductive respawn. Uncounted, a one-slot
+        local cap tripped the breaker on every queued task within ~3 ticks and
+        parked them all (live 2026-09-30). Floors at 1 (the record's creation
+        strike) and leaves an already-tripped record alone.
+        """
+        if not task_id:
+            return
+        # Best-effort: spawn_agent also runs on bare engines with no tracker.
+        tracker = getattr(self, "_pm_respawn_tracker", None) or {}
+        record = tracker.get((agent_slug, task_id))
+        if record is None or record.get("notified") or record["count"] <= 1:
+            return
+        record["count"] -= 1
+        self._schedule_respawn_persist(agent_slug, str(task_id), record)
 
     async def _mark_task_stalled(self, task_id: str) -> None:
         """Record a durable stalled marker on the task (breaker-tripped path).

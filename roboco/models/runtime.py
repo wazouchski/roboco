@@ -112,6 +112,7 @@ class WaitingRecord:
 MODEL_MAP: dict[str, str] = {
     "opus": "claude-opus-5",
     "sonnet": "claude-sonnet-5",
+    "sonnet-5.5": "claude-sonnet-5-5",
     "haiku": "claude-haiku-4-5-20251001",
 }
 

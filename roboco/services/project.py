@@ -704,19 +704,24 @@ class ProjectService(BaseService):
         project_id: UUID,
         agent_id: UUID,
         agent_team: Team,
+        task_team: Team | None = None,
     ) -> bool:
         """
         Check if an agent has access to a project.
 
         Access rules:
-        1. Agent must be in the project's assigned cell
-        2. If allowed_agents is set, agent must be in the list
-        3. If allowed_agents is None, all agents in the cell have access
+        1. Main PM has cross-cell coordination access
+        2. A task's explicitly assigned cell may work on that task even when
+           the project has a different default cell (cross-cell fan-out)
+        3. Otherwise, agents must be in the project's assigned cell
+        4. If allowed_agents is set, non-Main-PM agents must be in the list
+        5. If allowed_agents is None, all agents in the cell have access
 
         Args:
             project_id: Project to check
             agent_id: Agent to check
             agent_team: Agent's team/cell
+            task_team: Optional task team for a delegated cross-cell task
 
         Returns:
             True if agent has access, False otherwise
@@ -725,8 +730,21 @@ class ProjectService(BaseService):
         if not project:
             return False
 
-        # Must be in the assigned cell
-        if project.assigned_cell != agent_team:
+        # Main PM coordinates roots across every delivery cell. Roadmap and
+        # other Board-program items are intentionally materialized as
+        # Main-PM-owned coordination tasks even when the target project is
+        # assigned to Backend, Frontend, or UX/UI.
+        if agent_team == Team.MAIN_PM:
+            return True
+
+        # A PM may fan a project out to another delivery cell. The project
+        # cell remains its default/origin cell, while the delegated task's
+        # team determines who may work on that task.
+        if task_team is not None and task_team == agent_team:
+            project_cell_matches = True
+        else:
+            project_cell_matches = project.assigned_cell == agent_team
+        if not project_cell_matches:
             return False
 
         # If no specific allowed list, all cell members have access

@@ -89,7 +89,7 @@ def _codex_argv(prompt: str) -> list[str]:
         "exec",
         prompt,
         "-m",
-        _model_env_default("gpt-5.3-codex"),
+        _model_env_default("gpt-5.6-luna"),
         "--json",
         "--skip-git-repo-check",
     ]

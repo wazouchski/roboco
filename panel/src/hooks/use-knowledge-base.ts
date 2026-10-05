@@ -16,6 +16,7 @@ import type {
   KBStats,
   KBIndexType,
   KBIndexStats,
+  KBDocument,
   RAGHealthResponse,
   MentorAskRequest,
   MentorAskResponse,
@@ -128,6 +129,18 @@ export function useKBDocuments(
     queryFn: () => knowledgeBaseApi.listDocuments(indexType, params),
     enabled,
     staleTime: 1000 * 60 * 5, // 5 minutes
+  });
+}
+
+export function useKBDocument(
+  indexType: KBIndexType | null,
+  source: string | null,
+) {
+  return useQuery<KBDocument>({
+    queryKey: [...kbKeys.all, "document", indexType, source],
+    queryFn: () => knowledgeBaseApi.getDocument(indexType!, source!),
+    enabled: Boolean(indexType && source),
+    staleTime: 1000 * 60 * 10,
   });
 }
 

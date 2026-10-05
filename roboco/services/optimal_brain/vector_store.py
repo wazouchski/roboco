@@ -552,6 +552,36 @@ class VectorStore:
             for row in rows
         ]
 
+    async def get_document(self, source: str) -> dict[str, Any] | None:
+        """Reassemble the indexed chunks for one source document."""
+        pool = self._require_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                self._q(
+                    """
+                    SELECT content, metadata
+                    FROM {table}
+                    WHERE source = $1
+                    ORDER BY
+                        CASE
+                            WHEN metadata->>'chunk_index' ~ '^[0-9]+$'
+                            THEN (metadata->>'chunk_index')::int
+                            ELSE 2147483647
+                        END,
+                        id
+                    """
+                ),
+                source,
+            )
+        if not rows:
+            return None
+        return {
+            "source": source,
+            "content": "\n\n".join(str(row["content"]) for row in rows),
+            "metadata": _as_dict(rows[0]["metadata"]),
+            "chunk_count": len(rows),
+        }
+
     async def clear(self) -> None:
         """Delete all rows from the table (non-destructive: table survives)."""
         pool = self._require_pool()

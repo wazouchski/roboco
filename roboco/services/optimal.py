@@ -2288,6 +2288,13 @@ class OptimalService:
         )
         return []
 
+    async def get_indexed_document(
+        self, index_type: IndexType, source: str
+    ) -> dict[str, Any] | None:
+        """Read one full document by its indexed source URI."""
+        plugin = self._get_plugin(index_type)
+        return await plugin.get_document(source)
+
     async def refresh_index(self, index_type: IndexType, sources: list[str]) -> None:
         """Refresh an index with new sources."""
         plugin = self._get_plugin(index_type)

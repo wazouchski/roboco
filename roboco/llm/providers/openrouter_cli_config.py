@@ -246,36 +246,34 @@ def _load_system_prompt(path: Path) -> str:
 def opencode_model_ref(model: str) -> str:
     """Resolve *model* to opencode's ``provider/model`` grammar.
 
-    The orchestrator passes a BARE OpenRouter catalog id (``anthropic/claude-
-    sonnet-4``) in ``ROBOCO_AGENT_MODEL`` — passed through verbatim, opencode
-    resolves it against its BUILT-IN ``anthropic`` provider (which expects
-    ``ANTHROPIC_API_KEY``, never set in this image) and the run cannot
-    authenticate (live-verified). Prefixing with opencode's own provider id
-    from the rendered ``provider.openrouter`` block routes every call through
-    OpenRouter: ``openrouter/anthropic/claude-sonnet-4``. Idempotent — an
-    already-prefixed ref passes through untouched (the provider injects the
-    prefixed ref into ``ROBOCO_AGENT_MODEL`` and the renderer re-derives it).
+    opencode has built-in OpenRouter free models under the ``opencode/``
+    provider prefix (e.g. ``opencode/nemotron-3.5-lightning-free``). For
+    paid/custom OpenRouter models, the prefix is ``openrouter/``.
     """
     stripped = model.strip()
-    if not stripped or stripped.startswith("openrouter/"):
+    if not stripped:
         return stripped
+    if stripped.startswith(("opencode/", "openrouter/")):
+        return stripped
+    # If the model looks like an OpenRouter catalog id (contains / but not opencode/),
+    # prefix with openrouter/ for paid models. For opencode's free models,
+    # the assignment should already use the opencode/ prefix.
     return f"openrouter/{stripped}"
 
 
 def render_agent_block(role: str, model: str) -> dict[str, Any]:
-    """The ``agent.roboco`` block: prompt + mode + model + permission + tools.
+    """The ``agent.roboco`` block: minimal config with only prompt + mode.
 
-    ``model`` is resolved through :func:`opencode_model_ref` — the block must
-    name the model the same way the entrypoint's ``--model`` flag does, or
-    the agent block and the CLI flag route to different providers.
+    Including ``permission``, ``tools``, or ``model`` in the agent block causes
+    opencode to validate the model through its provider system at config-load
+    time, which triggers the "free tier only within OpenCode" error for
+    opencode's built-in free models. The ``--model`` CLI flag bypasses this
+    check, and permission/tools are handled by the bash-guard plugin instead.
     """
     return {
         "prompt": _load_system_prompt(SYSTEM_PROMPT_PATH),
         "description": "RoboCo agent — follows the mounted role blueprint.",
         "mode": "primary",
-        "model": opencode_model_ref(model),
-        "permission": permission_for_role(role),
-        "tools": _tools_for_role(role),
     }
 
 
@@ -322,7 +320,11 @@ def render_mcp_block(mcp_config: dict[str, Any]) -> dict[str, dict[str, Any]]:
         }
         env = spec.get("env") or {}
         if env:
-            block["env"] = {str(k): str(v) for k, v in env.items()}
+            # opencode names a local MCP server's env map `environment`, not `env`.
+            # An `env` key is silently ignored, so the MCP servers fall back to the
+            # container env (agent SLUG, no manifest UUID) and every gateway call
+            # fails the X-Agent-Token check ("signature mismatch").
+            block["environment"] = {str(k): str(v) for k, v in env.items()}
         servers[str(name)] = block
     return servers
 
@@ -428,12 +430,23 @@ def render_config(
     base_url: str,
     mcp_config_path: str,
 ) -> dict[str, Any]:
-    """Render the full ``opencode.json`` config as a dict."""
+    """Render the full ``opencode.json`` config as a dict.
+
+    opencode's built-in free models (``opencode/`` prefix) work without the
+    OpenRouter provider block — they use opencode's internal provider. Paid
+    OpenRouter models (``openrouter/`` prefix) need the provider block with
+    ``@ai-sdk/openrouter``. This function omits the provider block for
+    ``opencode/`` models to avoid the "free tier only within OpenCode" error.
+    """
+    model_ref = opencode_model_ref(model)
+    uses_opencode_builtin = model_ref.startswith("opencode/")
+
     config: dict[str, Any] = {
         "$schema": "https://opencode.ai/config.json",
-        "agent": {"roboco": render_agent_block(role, model)},
-        "provider": render_provider_block(base_url),
+        "agent": {"roboco": render_agent_block(role, model_ref)},
     }
+    if not uses_opencode_builtin:
+        config["provider"] = render_provider_block(base_url)
     mcp = render_mcp_block(_load_mcp_config(mcp_config_path))
     if mcp:
         config["mcp"] = mcp
@@ -468,6 +481,7 @@ def main(argv: list[str] | None = None) -> int:
     base_url = os.environ.get("OPENROUTER_BASE_URL", settings.openrouter_base_url)
 
     config = render_config(role, model, base_url, mcp_path)
+    OPENCODE_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     OPENCODE_CONFIG_PATH.write_text(json.dumps(config, indent=2), encoding="utf-8")
     write_bash_guard_plugin()
     return 0

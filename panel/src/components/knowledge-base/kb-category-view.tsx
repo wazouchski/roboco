@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { KBIndexType } from "@/types";
+import { KBIndexType, KBSearchResult } from "@/types";
 import { useKBDocuments } from "@/hooks/use-knowledge-base";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { KBDocumentDrawer } from "./kb-document-drawer";
 
 const PAGE_SIZE = 25;
 
@@ -26,6 +27,8 @@ interface KBCategoryViewProps {
 // Inner component that resets when category changes via key
 function KBCategoryViewInner({ category }: { category: KBIndexType }) {
   const [page, setPage] = useState(1);
+  const [selectedDocument, setSelectedDocument] =
+    useState<KBSearchResult | null>(null);
   const offset = (page - 1) * PAGE_SIZE;
 
   const { data, isLoading } = useKBDocuments(
@@ -71,7 +74,19 @@ function KBCategoryViewInner({ category }: { category: KBIndexType }) {
           </Card>
         ) : (
           documents.map((doc) => (
-            <Card key={doc.id} className="hover:bg-muted/50 transition-colors">
+            <Card
+              key={doc.id}
+              className="hover:bg-muted/50 transition-colors cursor-pointer"
+              onClick={() =>
+                setSelectedDocument({
+                  content: "",
+                  source: doc.source,
+                  score: 0,
+                  index_type: category,
+                  metadata: doc.metadata ?? {},
+                })
+              }
+            >
               <CardContent className="p-4">
                 <div className="flex items-start gap-3">
                   <div className="p-2 bg-muted rounded">
@@ -132,6 +147,12 @@ function KBCategoryViewInner({ category }: { category: KBIndexType }) {
           </div>
         </div>
       )}
+      <KBDocumentDrawer
+        result={selectedDocument}
+        onOpenChange={(open) => {
+          if (!open) setSelectedDocument(null);
+        }}
+      />
     </div>
   );
 }

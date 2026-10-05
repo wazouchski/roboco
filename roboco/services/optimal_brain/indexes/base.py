@@ -1091,6 +1091,16 @@ class BaseIndexPlugin(ABC):
             logger.warning(f"Failed to list documents in {self.index_type.value}: {e}")
             return []
 
+    async def get_document(self, source: str) -> dict[str, Any] | None:
+        """Return the reassembled indexed document for ``source``."""
+        try:
+            return await self._require_store.get_document(source)
+        except Exception as e:
+            logger.warning(
+                f"Failed to read document in {self.index_type.value}: {e}"
+            )
+            return None
+
     async def add_sources(self, sources: list[str]) -> int:
         """
         Add file/directory sources to the index.

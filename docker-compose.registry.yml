@@ -73,10 +73,11 @@ x-orchestrator-env: &orchestrator-env
   # token below so the panel keeps working. Set false only on a trusted
   # private network with no untrusted reach to nginx.
   ROBOCO_AGENT_AUTH_REQUIRED: ${ROBOCO_AGENT_AUTH_REQUIRED:-true}
-  ROBOCO_LOCAL_LLM_BASE_URL: http://roboco-ollama:11434/v1
+  ROBOCO_LOCAL_LLM_BASE_URL: http://172.20.0.1:1234/v1
   ROBOCO_LOCAL_LLM_MODEL: glm-5.3:cloud
   ROBOCO_DEFAULT_EMBEDDING_MODEL: qwen3-embedding:0.6b
   ROBOCO_OLLAMA_BASE_URL: http://roboco-ollama:11434
+  ROBOCO_LOCAL_MAX_CONCURRENT: ${ROBOCO_LOCAL_MAX_CONCURRENT:-1}
   # Video renderer sidecar (use container name). The video engine
   # itself is default-off (video_engine_enabled); this just points the
   # client at the sidecar for when it's armed.
@@ -95,6 +96,8 @@ x-orchestrator-env: &orchestrator-env
   # ChatGPT-subscription auth (host ~/.codex) for Codex-CLI agents — same
   # shape as ROBOCO_HOST_GROK_DIR. Run `codex login` on the host.
   ROBOCO_HOST_CODEX_DIR: ${ROBOCO_HOST_CODEX_DIR:-${HOME}/.codex}
+  # GPT-5.6 Luna is the lower-usage Codex model for routine delivery work.
+  ROBOCO_CODEX_CLI_MODEL: ${ROBOCO_CODEX_CLI_MODEL:-gpt-5.6-luna}
   # OAuth login (host ~/.gemini) for Gemini-CLI agents — the orchestrator
   # mounts <dir>/oauth_creds.json (read-only) into each Gemini agent. Run
   # `gemini` interactively once on the host to produce it.
@@ -111,6 +114,14 @@ x-orchestrator-env: &orchestrator-env
   ROBOCO_KIMI_RATE_LIMIT_RETRY_AFTER_SECONDS: ${ROBOCO_KIMI_RATE_LIMIT_RETRY_AFTER_SECONDS:-60}
   ROBOCO_KIMI_AUTH_RETRY_AFTER_SECONDS: ${ROBOCO_KIMI_AUTH_RETRY_AFTER_SECONDS:-60}
   ROBOCO_KIMI_MAX_CONCURRENT: ${ROBOCO_KIMI_MAX_CONCURRENT:-1}
+  # Context window Claude Code is told for each LOCAL model (must stay below the server's ctx-size in
+  # ~/.config/llama-server/models.ini); see Settings.local_context_windows
+  ROBOCO_LOCAL_CONTEXT_WINDOWS: ${ROBOCO_LOCAL_CONTEXT_WINDOWS:-qwen36-reap=120000,*=56000}
+  # While a cloud provider is rate-limited/parked, route its spawns to this LOCAL model (empty = off)
+  ROBOCO_RATE_LIMIT_FALLBACK_MODEL: ${ROBOCO_RATE_LIMIT_FALLBACK_MODEL:-}
+  # Kill a silent (no gateway verb) non-grok agent after this many seconds. Default 3600 killed slow local
+  # Qwen devs that were still reading/editing files between verbs (task released, breaker strikes).
+  ROBOCO_CLAUDE_STUCK_KILL_SECONDS: ${ROBOCO_CLAUDE_STUCK_KILL_SECONDS:-3600}
   ROBOCO_HOST_DATA_DIR: ${ROBOCO_HOST_DATA_DIR:-/opt/roboco/data}
   # Reachable base URL for commit-trailer links — set to your host's LAN
   # address or domain so the links in commit bodies resolve.
@@ -607,7 +618,10 @@ services:
   # Orchestrator — API server + agent spawner
   # --------------------------------------------------------------------------
   orchestrator:
-    image: ${ROBOCO_REGISTRY:-ghcr.io/rennf93}/roboco-orchestrator:${ROBOCO_VERSION:-latest}
+    build:
+      context: .
+      dockerfile: docker/orchestrator.Dockerfile
+    image: roboco-orchestrator-local
     container_name: roboco-orchestrator
     restart: unless-stopped
     # SYS_PTRACE: py-spy attaches to the running process (PID 1) to dump a
@@ -615,6 +629,8 @@ services:
     # py-spy dump --pid 1`).
     cap_add:
       - SYS_PTRACE
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # Multi-homed: the agent mesh (default) for spawned agents / panel /
     # ollama, the data network for postgres/redis, plus render to reach the
     # isolated video-renderer sidecar.
@@ -628,7 +644,7 @@ services:
       # never needs a routable host publish; remote access goes via nginx + cloud
       # auth. A 0.0.0.0 publish exposed spawn/stop and settings-write with no
       # credential to anyone who could reach the host (GHSA-4f7g-w95g-5q2c).
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:8001:8000"
     environment:
       <<: *orchestrator-env
       # api role: serves stateless FastAPI request/response routes; the
@@ -676,9 +692,14 @@ services:
   # verb fleet-wide for hours (2026-09-06).
   # --------------------------------------------------------------------------
   dispatcher:
-    image: ${ROBOCO_REGISTRY:-ghcr.io/rennf93}/roboco-orchestrator:${ROBOCO_VERSION:-latest}
+    image: roboco-orchestrator-local
+    build:
+      context: .
+      dockerfile: docker/orchestrator.Dockerfile
     container_name: roboco-dispatcher
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - default
       - data
@@ -711,7 +732,10 @@ services:
   # spawns agent containers, just needs DB + redis + ollama.
   # --------------------------------------------------------------------------
   indexer:
-    image: ${ROBOCO_REGISTRY:-ghcr.io/rennf93}/roboco-orchestrator:${ROBOCO_VERSION:-latest}
+    image: roboco-orchestrator-local
+    build:
+      context: .
+      dockerfile: docker/orchestrator.Dockerfile
     container_name: roboco-indexer
     restart: unless-stopped
     networks:
@@ -727,10 +751,11 @@ services:
       ROBOCO_REDIS_HOST: roboco-redis
       ROBOCO_REDIS_PORT: 6379
       ROBOCO_ENCRYPTION_KEY: ${ROBOCO_ENCRYPTION_KEY:?ROBOCO_ENCRYPTION_KEY is required}
-      ROBOCO_LOCAL_LLM_BASE_URL: http://roboco-ollama:11434/v1
+      ROBOCO_LOCAL_LLM_BASE_URL: http://172.20.0.1:1234/v1
       ROBOCO_LOCAL_LLM_MODEL: glm-5.3:cloud
       ROBOCO_DEFAULT_EMBEDDING_MODEL: qwen3-embedding:0.6b
       ROBOCO_OLLAMA_BASE_URL: http://roboco-ollama:11434
+      ROBOCO_LOCAL_MAX_CONCURRENT: ${ROBOCO_LOCAL_MAX_CONCURRENT:-1}
       ROBOCO_ENVIRONMENT: production
     # No healthcheck: the indexer role runs only the Redis-stream worker
     # (roboco/bootstrap.py's _run_indexer_role), never uvicorn, so there is
@@ -745,7 +770,10 @@ services:
   # Next.js control panel (fronted by nginx; not exposed directly)
   # --------------------------------------------------------------------------
   panel:
-    image: ${ROBOCO_REGISTRY:-ghcr.io/rennf93}/roboco-panel:${ROBOCO_VERSION:-latest}
+    build:
+      context: .
+      dockerfile: docker/panel.Dockerfile
+    image: roboco-panel-local
     container_name: roboco-panel
     restart: unless-stopped
     expose:
@@ -770,6 +798,7 @@ services:
       NGINX_ENVSUBST_FILTER: "^ROBOCO_"
     volumes:
       - ./deploy/nginx.conf:/etc/nginx/templates/default.conf.template:ro
+      - ./front/registry-active-upstreams.conf:/etc/nginx/front/active-upstreams.conf:ro
     depends_on:
       - panel
       - orchestrator

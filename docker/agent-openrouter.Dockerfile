@@ -30,7 +30,7 @@ USER root
 # mechanism to compute a LABEL value from a RUN command's own output, so the
 # file is the durable per-image provenance record (a record, not a pin: the
 # next build always reinstalls whatever is latest that day).
-RUN npm install -g opencode-ai \
+RUN npm install -g opencode-ai @ai-sdk/openrouter \
     && command -v opencode \
     && opencode --version | tee /etc/opencode-cli-version \
     && rm -rf /tmp/*

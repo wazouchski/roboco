@@ -1373,7 +1373,19 @@ class Choreographer:
             team = Team(agent.team)
         except ValueError:
             return None
-        has_access = await self.project.check_agent_access(project.id, agent.id, team)
+        task_team = getattr(task, "team", None)
+        try:
+            task_team = Team(task_team) if task_team is not None else None
+        except ValueError:
+            task_team = None
+        if task_team is None:
+            has_access = await self.project.check_agent_access(
+                project.id, agent.id, team
+            )
+        else:
+            has_access = await self.project.check_agent_access(
+                project.id, agent.id, team, task_team=task_team
+            )
         return agent_access_denied_guard(task, project.id, agent.id, has_access)
 
     async def _sequencing_claim_guard(self, task: Any) -> Envelope | None:
@@ -7043,7 +7055,7 @@ class Choreographer:
         have gotten from the upfront completeness check.
         """
         from roboco.foundation.policy.task_completeness import TaskCompletenessError
-        from roboco.services.base import ValidationError
+        from roboco.services.base import ConflictError, ValidationError
 
         parent_task_id = parent.id
         try:
@@ -7059,6 +7071,27 @@ class Choreographer:
                         "re-issue delegate(...) with corrected fields: "
                         f"{', '.join(exc.missing)}. Each field's required "
                         "shape is in `field_hints`."
+                    ),
+                    context_briefing=briefing,
+                ).with_introspection(task=parent, role=role_str),
+                agent_id=pm_agent_id,
+                task_id=parent_task_id,
+                verb="delegate",
+            )
+        except ConflictError as exc:
+            # A sequencing edge refused by add_dependency (cycle). Unhandled it
+            # is a bare 409 with no remediation and the PM retries the same call
+            # until its container crashes; give it a way out.
+            return await self._emit_rejection(
+                Envelope.invalid_state(
+                    message=exc.message,
+                    remediate=(
+                        "the delegate was rolled back: a sequencing edge would "
+                        "close a dependency cycle among the siblings. Do not retry "
+                        "the same call. Drop or change `depends_on`, or give the "
+                        "child a disjoint `intends_to_touch`, then re-issue "
+                        "delegate(...). If it persists, escalate with "
+                        "request_changes/notify instead of retrying."
                     ),
                     context_briefing=briefing,
                 ).with_introspection(task=parent, role=role_str),
@@ -7451,6 +7484,9 @@ class Choreographer:
         # delegate flow is this one wave computation; merge order for wave
         # ties falls back to created_at in the merge/lane dispatch barriers.
         await self.task.stamp_wave_sequence(new_task.id)
+        # An older sibling the collision DAG held behind the new task must sit
+        # above it, else the two tie and the next wiring pass flips the pair.
+        await self.task.raise_dependent_waves(new_task.id)
         return new_task
 
     @staticmethod

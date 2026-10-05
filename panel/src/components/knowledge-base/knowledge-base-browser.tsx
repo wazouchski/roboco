@@ -2,7 +2,7 @@
 
 import { useState, useCallback, Suspense, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { KBIndexType, RAGQueryResponse } from "@/types";
+import { KBIndexType, KBSearchResult, RAGQueryResponse } from "@/types";
 import {
   useKBStats,
   useKBSearch,
@@ -68,6 +68,7 @@ import { RAGAnswerDisplay } from "./rag-answer-display";
 import { MentorChat } from "./mentor-chat";
 import { KBCategoryNav } from "./kb-category-nav";
 import { KBCategoryView } from "./kb-category-view";
+import { KBDocumentDrawer } from "./kb-document-drawer";
 import { getIndexTypeDescription } from "./kb-index-type-badge";
 
 const TAB_VALUES = ["search", "ask", "mentor", "browse", "admin"] as const;
@@ -122,6 +123,8 @@ function KnowledgeBaseBrowserContent() {
   const [ragQuestion, setRagQuestion] = useState<string | null>(null);
   const [ragResponse, setRagResponse] = useState<RAGQueryResponse | null>(null);
   const [ragError, setRagError] = useState<string | null>(null);
+  const [selectedDocument, setSelectedDocument] =
+    useState<KBSearchResult | null>(null);
 
   // Update URL params helper
   const updateParams = useCallback(
@@ -415,6 +418,7 @@ function KnowledgeBaseBrowserContent() {
                   response={searchResults}
                   isLoading={searchLoading}
                   query={searchQuery}
+                  onResultClick={setSelectedDocument}
                 />
               </ScrollArea>
             </div>
@@ -787,6 +791,12 @@ function KnowledgeBaseBrowserContent() {
           </div>
         </TabsContent>
       </Tabs>
+      <KBDocumentDrawer
+        result={selectedDocument}
+        onOpenChange={(open) => {
+          if (!open) setSelectedDocument(null);
+        }}
+      />
     </div>
   );
 }

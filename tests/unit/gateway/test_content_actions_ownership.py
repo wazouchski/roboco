@@ -14,11 +14,15 @@ A2A) are exempt — used for channel announcements.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
 from roboco.services.gateway.content_actions import ContentActions, ContentActionsDeps
+
+if TYPE_CHECKING:
+    from uuid import UUID
 
 
 def _make_deps(**overrides: AsyncMock) -> ContentActionsDeps:
@@ -472,6 +476,94 @@ async def test_evidence_allows_dependency_inspection() -> None:
     env = await ca.evidence(agent_id=agent_id, task_id=dep_task_id)
     assert env.error is None
     task_svc.list_assigned_for_agent.assert_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Coroner autopsy: the Auditor must be able to read the one incident its open
+# autopsy names, even though someone else owns it. Scoped to that incident.
+# ---------------------------------------------------------------------------
+
+
+def _incident_task(task_id: UUID, assignee: UUID) -> MagicMock:
+    return MagicMock(
+        id=task_id,
+        status="blocked",
+        assigned_to=assignee,
+        branch_name="feature/backend/abc",
+        work_session_id=uuid4(),
+        commits=[],
+        pr_number=None,
+        pr_url="",
+        dev_notes="",
+        acceptance_criteria_status=[],
+    )
+
+
+def _autopsy(assigned_to: UUID, incident_task_id: UUID) -> MagicMock:
+    return MagicMock(
+        assigned_to=assigned_to,
+        orchestration_markers={
+            "coroner_incident": {
+                "incident_task_id": str(incident_task_id),
+                "kind": "stranded",
+            }
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_evidence_allows_the_incident_of_the_callers_open_autopsy() -> None:
+    auditor_id = uuid4()
+    incident_id = uuid4()
+    task_svc = AsyncMock()
+    task_svc.get.return_value = _incident_task(incident_id, assignee=uuid4())
+    task_svc.list_open_coroner_cycles.return_value = [_autopsy(auditor_id, incident_id)]
+    task_svc.session.execute = AsyncMock(
+        return_value=MagicMock(
+            scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+        )
+    )
+    git_svc = AsyncMock()
+    git_svc.diff_and_files.return_value = ("", [])
+    ca = ContentActions(_make_deps(task=task_svc, git=git_svc, workspace=AsyncMock()))
+
+    env = await ca.evidence(agent_id=auditor_id, task_id=incident_id)
+
+    assert env.error is None
+    task_svc.list_open_coroner_cycles.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_evidence_blocks_a_task_the_autopsy_does_not_name() -> None:
+    """The exemption is the one named incident, not Auditor-wide reads."""
+    auditor_id = uuid4()
+    incident_id = uuid4()
+    other_task_id = uuid4()
+    task_svc = AsyncMock()
+    task_svc.get.return_value = _incident_task(other_task_id, assignee=uuid4())
+    task_svc.list_open_coroner_cycles.return_value = [_autopsy(auditor_id, incident_id)]
+    workspace_svc = AsyncMock()
+    ca = ContentActions(_make_deps(task=task_svc, workspace=workspace_svc))
+
+    env = await ca.evidence(agent_id=auditor_id, task_id=other_task_id)
+
+    assert env.as_dict()["error"] == "not_authorized"
+    workspace_svc.fetch_branch_for_inspection.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_evidence_blocks_when_the_autopsy_belongs_to_another_agent() -> None:
+    caller_id = uuid4()
+    auditor_id = uuid4()
+    incident_id = uuid4()
+    task_svc = AsyncMock()
+    task_svc.get.return_value = _incident_task(incident_id, assignee=uuid4())
+    task_svc.list_open_coroner_cycles.return_value = [_autopsy(auditor_id, incident_id)]
+    ca = ContentActions(_make_deps(task=task_svc, workspace=AsyncMock()))
+
+    env = await ca.evidence(agent_id=caller_id, task_id=incident_id)
+
+    assert env.as_dict()["error"] == "not_authorized"
 
 
 # ---------------------------------------------------------------------------

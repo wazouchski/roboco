@@ -5542,6 +5542,25 @@ class ContentActions:
         assigned = await self.task.list_assigned_for_agent(agent_id)
         return any(task.id in (a.dependency_ids or []) for a in assigned)
 
+    async def _is_coroner_autopsy_subject(self, agent_id: UUID, task: Any) -> bool:
+        """True when ``task`` is the incident an open Coroner autopsy assigned
+        to the caller is investigating.
+
+        The autopsy prompt tells the Auditor to read the incident's journey with
+        ``evidence()``, but the incident is by definition owned by someone else
+        (a blocked or bounced task keeps its assignee), so the ownership gate
+        refused every autopsy and the Auditor diagnosed from the transition
+        history alone, missing the reason the worker had journaled. Scoped to
+        the one incident the open autopsy names, not to Auditor-wide reads.
+        """
+        for cycle in await self.task.list_open_coroner_cycles():
+            if cycle.assigned_to != agent_id:
+                continue
+            ref = markers.get_coroner_incident(cycle) or {}
+            if ref.get("incident_task_id") == str(task.id):
+                return True
+        return False
+
     async def evidence(
         self,
         *,
@@ -5552,9 +5571,10 @@ class ContentActions:
 
         Fetches the dev branch into the agent's workspace before diffing.
         Allows inspection when the caller is the assignee, the task is
-        unassigned, the caller co-reviews a shared board task, or the task is a
-        dependency the caller is waiting on — strict ownership only blocks
-        snooping an unrelated, actively-owned task.
+        unassigned, the caller co-reviews a shared board task, the task is a
+        dependency the caller is waiting on, or it is the incident the caller's
+        open Coroner autopsy names — strict ownership only blocks snooping an
+        unrelated, actively-owned task.
 
         ``files_changed`` and ``pr_diff_summary`` are pulled from git (against
         the branch's parent — the authoritative source) rather than the latest
@@ -5593,6 +5613,7 @@ class ContentActions:
             and t.assigned_to != agent_id
             and not await self._board_may_co_review(agent_id, t)
             and not await self._is_caller_dependency(agent_id, t)
+            and not await self._is_coroner_autopsy_subject(agent_id, t)
         ):
             return _ownership_violation(task_id)
         journal_highlights = await self.evidence_repo.journal_highlights_for_task(

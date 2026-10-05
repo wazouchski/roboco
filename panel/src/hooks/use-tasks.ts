@@ -50,12 +50,13 @@ export function useTask(taskId: string) {
     queryKey: taskKeys.detail(taskId),
     queryFn: () => tasksApi.get(taskId),
     enabled: !!taskId,
-    // No per-task websocket exists, so while a board task is mid-review we poll
-    // the detail so the "Approve & Start" button appears as soon as the board
-    // finishes. Polling stops the moment board_review_complete flips true.
+    // No per-task websocket exists. Poll active/claimed tasks so the detail
+    // page can show the worker heartbeat and status without a manual refresh.
     refetchInterval: (query) =>
-      query.state.data?.team === Team.BOARD &&
-      !query.state.data?.board_review_complete
+      query.state.data?.status === TaskStatus.CLAIMED ||
+      query.state.data?.status === TaskStatus.IN_PROGRESS ||
+      (query.state.data?.team === Team.BOARD &&
+        !query.state.data?.board_review_complete)
         ? 4000
         : false,
   });

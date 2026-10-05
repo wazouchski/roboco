@@ -40,3 +40,18 @@ def test_no_lifecycle_role_routes_below_the_structured_verb_floor() -> None:
 def test_main_pm_role_routes_to_sonnet() -> None:
     # Phase 2 experiment: main_pm off Opus (Sonnet 5 cache-write ~12x cheaper).
     assert ROLE_MODEL_MAP["main_pm"] == "sonnet"
+
+
+def test_sonnet_55_alias_resolves_to_hyphenated_id() -> None:
+    # Anthropic's id for Sonnet 5.5 is hyphenated ("claude-sonnet-5-5"); a dotted
+    # "claude-sonnet-5.5" is not a valid model id.
+    assert MODEL_MAP["sonnet-5.5"] == "claude-sonnet-5-5"
+
+
+def test_sonnet_55_is_in_the_catalog_and_routes_to_anthropic() -> None:
+    from roboco.models.base import ModelProvider
+    from roboco.models.llm_catalog import MODEL_CATALOG_BY_NAME
+
+    entry = MODEL_CATALOG_BY_NAME["sonnet-5.5"]
+    assert entry.provider_type is ModelProvider.ANTHROPIC
+    assert "5.5" in entry.display_name

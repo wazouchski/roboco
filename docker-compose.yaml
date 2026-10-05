@@ -446,6 +446,7 @@ services:
     image: quay.io/minio/minio:latest
     container_name: roboco-minio
     restart: unless-stopped
+    profiles: ["video"]
     # data-only network — keeps MinIO off the agent mesh; the multi-homed
     # orchestrator reaches it via its data NIC. Host ports for debugging.
     networks:
@@ -472,6 +473,7 @@ services:
   minio-init:
     image: quay.io/minio/mc:latest
     container_name: roboco-minio-init
+    profiles: ["video"]
     depends_on:
       minio:
         condition: service_healthy
@@ -901,6 +903,8 @@ services:
     restart: unless-stopped
     cap_add:
       - SYS_PTRACE
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - default
       - data
@@ -947,6 +951,8 @@ services:
     restart: unless-stopped
     cap_add:
       - SYS_PTRACE
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - default
       - data
@@ -995,6 +1001,8 @@ services:
     pull_policy: never
     container_name: roboco-dispatcher-blue
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - default
       - data
@@ -1021,6 +1029,8 @@ services:
     pull_policy: never
     container_name: roboco-dispatcher-green
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - default
       - data

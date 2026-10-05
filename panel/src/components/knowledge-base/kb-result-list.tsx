@@ -9,12 +9,14 @@ interface KBResultListProps {
   response: KBSearchResponse | undefined;
   isLoading: boolean;
   query: string;
+  onResultClick?: (result: KBSearchResponse["results"][number]) => void;
 }
 
 export function KBResultList({
   response,
   isLoading,
   query,
+  onResultClick,
 }: KBResultListProps) {
   if (isLoading) {
     return (
@@ -66,7 +68,11 @@ export function KBResultList({
         &ldquo;{response.query}&rdquo;
       </div>
       {response.results.map((result, index) => (
-        <KBResultCard key={`${result.source}-${index}`} result={result} />
+        <KBResultCard
+          key={`${result.source}-${index}`}
+          result={result}
+          onClick={() => onResultClick?.(result)}
+        />
       ))}
     </div>
   );
