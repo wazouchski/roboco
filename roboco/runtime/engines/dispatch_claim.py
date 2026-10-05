@@ -834,6 +834,27 @@ class DispatchClaimEngine(_Base):
             return self._TEAM_PM_MAP.get(team, "be-pm")
         return "main-pm"
 
+    @staticmethod
+    def _auto_submit_pm_uuid(task: dict[str, Any], pm_slug: str, pm_role: str) -> str:
+        """Identity to submit as: the owning PM, never a stale non-PM assignee.
+
+        ``assigned_to`` moves to the PR reviewer when the PM submits and stays
+        there after a pr_fail sends the task back to the PM. Signing the submit
+        as that reviewer under the PM role headers is rejected
+        (``role 'pr_reviewer' may not call 'submit_up'``) every tick, so the
+        PM is respawned to no effect until the respawn breaker trips. A known
+        agent whose role differs from the PM's is therefore replaced by the
+        PM's own id; an unknown id is kept (the owner is not in the registry).
+        """
+        pm_default = AGENT_UUIDS.get(pm_slug) or ""
+        assignee = str(task.get("assigned_to") or "")
+        if not assignee:
+            return pm_default
+        for slug, uuid in AGENT_UUIDS.items():
+            if uuid == assignee and (get_agent_role(slug) or "") != pm_role:
+                return pm_default
+        return assignee
+
     def _auto_submit_target(
         self, task: dict[str, Any], pm_slug: str
     ) -> tuple[str, str, str, str] | None:
@@ -846,7 +867,7 @@ class DispatchClaimEngine(_Base):
         """
         role = get_agent_role(pm_slug) or ""
         pair = self._AUTO_SUBMIT_VERB_BY_ROLE.get(role)
-        pm_uuid = str(task.get("assigned_to") or AGENT_UUIDS.get(pm_slug) or "")
+        pm_uuid = self._auto_submit_pm_uuid(task, pm_slug, role)
         if (
             _is_coordination_task(task)
             or not task.get("branch_name")

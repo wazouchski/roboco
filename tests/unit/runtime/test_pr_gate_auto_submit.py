@@ -218,3 +218,19 @@ def test_closure_prompt_omits_note_when_no_reason() -> None:
     orch = _orch()
     prompt = orch._build_pm_closure_prompt(_CELL_TASK, [])
     assert "already attempted to auto-submit" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_auto_submit_ignores_stale_reviewer_assignee() -> None:
+    """After a pr_fail the task is back with the PM but assigned_to is still the
+    PR reviewer; the submit must be signed as the PM, not the reviewer."""
+    orch = _orch()
+    client = _client({"status": "awaiting_pr_review", "error": None})
+    task = {**_CELL_TASK, "assigned_to": AGENT_UUIDS["be-pr-reviewer"]}
+
+    ok, _reason = await orch._try_auto_submit(client, task, "be-pm")
+    assert ok is True
+
+    _args, kwargs = client.post.call_args
+    assert kwargs["headers"]["X-Agent-ID"] == AGENT_UUIDS["be-pm"]
+    assert kwargs["headers"]["X-Agent-Role"] == "cell_pm"
